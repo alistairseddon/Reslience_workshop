@@ -355,10 +355,10 @@ write_csv(bacon_table, path = paste0("Plum_runs/", handle_want,"/",handle_want, 
 
 3. Run the age modelling algorithm
 ```{r bacon age model run, echo = TRUE}
-Bacon(core = handle_want,
-      depths = depth,
-      thick = 20
-      )
+# Bacon(core = handle_want,
+#       depths = depth,
+#       thick = 20
+#       )
 ```
 
 4. Import the new age and depth information
