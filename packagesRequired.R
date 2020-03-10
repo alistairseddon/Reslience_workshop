@@ -1,18 +1,13 @@
-install.packages("neotoma", 
-                 "Bchron",
+install.packages(c("neotoma", 
+                 "rbacon",
                  "tidyverse",
                  "rioja",
                  "devtools",
                  "nlme",
                  "mgcv",
                  "vegan",
-                 "cowplot",
-                 ) 
-
-
-
-
+                 "cowplot"
+                 )) 
 devtools::install_github("richardjtelford/ggpalaeo")
 devtools::install_github("gavinsimpson/gratia") 
 
-# Doesn't work. Need to update Rlibrary(rioja)

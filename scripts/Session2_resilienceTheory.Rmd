@@ -2,33 +2,32 @@
 title: 'Day 1: Tipping Points and Critical Thresholds in Model Systems'
 author: "Alistair Seddon"
 date: "2/7/2020"
-output: ioslides_presentation
+output:
+  slidy_presentation: default
+  ioslides_presentation: default
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE)
 library("tidyverse")
+
 ```
 
 ## Overview
-
 - What do we mean by dynamical behaviour?
-- What are critical transitions?
-- What are some characteristic behaviour of critical transitions in different datasets?
+- What are critical transitions in model systems?
+- What are some characteristic behaviours of critical transitions in different datasets?
 - What are the implications for these ideas in palaeoecological research?
 
-## Critical Transitions in Nature and Societ
-
+## Critical Transitions in Nature and Society
 - Disclaimer: I am **not** a theoretical ecologist
 - I became interested in complex systems as a palaeoecologist, and became interested in how to apply these ideas to palaeoecological datasets
-- Much of the following slides are based on Scheffer's 2009 book, taking the examples from the back of the book.
-
+- Much of the following slides are based on Scheffer's (2009) book, taking the examples from the back of the book.
 
 ## Dynamical Systems (A very brief introduction)
 - Fixed rule (e.g. mathematical model) determines time dependence of a point in geometric space
 - Dynamical system theory used to explain the interaction of lots of processes
 - Examples of dynamical systems include: Fish populations, a pendulum swinging.
-
 
 ## Characteristics of dynamical systems 
 - State depends on a balance of processes
@@ -37,17 +36,13 @@ library("tidyverse")
 - Carrying capacity in a population: means the population tends of equilibrium
 - Stability landscapes an important concept
 - Otherwise known as an *attractor* or *stable state*
-
-
 <!-- Notes: Dynamical systems: branch of mathematics describing the interaction of different processes- Earth is a dynamical system as it is the result of different processes.
 
 Population density is a function of birth rates and death rates, if you increase pop densitiy above the carrying capacity, fewer resources and die off, if you decrease, more resources and return to equilibrium carrying capacity
  -->
-
-
-
+ 
 ## Alternative equilibria
-- In population we can also have something called an Allee effect
+- In a population we can also have something called an Allee effect
 - At lower population densities, it can be harder for individuals to find food, or each other. If you reach this low number the population tends to crash.
 - The result is that you now have *stable* and *unstable* regions, where populations are *repelled* or *attracted* to depedning on where you are in the stability plot.
 
@@ -60,7 +55,6 @@ Population density is a function of birth rates and death rates, if you increase
 ### Noisy system
 t <- 1:100
 x1 <- runif(length(t), 0.2, 0.8 )
-
 
 ### Choatic system
 r <- 3.3
@@ -82,7 +76,6 @@ eq1Tib <- tibble(Time = t, x1 = x1, x2 = x2 )
 ## Other characteristics of dynamical systems (1)
 - Plot these data
 ```{r Chaos vs. Noise Plot, echo = TRUE}
-
 fig1 <- eq1Tib %>% 
   pivot_longer(c(x1, x2), names_to = "model",  values_to = "Pop.density") %>% 
   ggplot(aes(x = Time, y = Pop.density)) +
@@ -101,7 +94,6 @@ fig1
 - Lagged-coordinate embedding can be used to predict future timescales, and is another way to identify attractors
 
 ```{r Lagged Coordinate Embedding, echo = TRUE}
-
 x1.1 <- c(x1[2:length(x1)], NA)
 x2.1 <- c( x2[2:length(x2)], NA)
 
@@ -118,19 +110,13 @@ fig2 <- lags %>%
 fig2
 
 ```
-
 <!-- One interesting thing about lagged coordinate embedding is that we can use the previous timestep to predict what is going to happen next, without understanding the actual equations or processes that govern the system… taking advantage of these kind of properties of dynamical systems is something that we can come back to later. -->
-
-<!-- Plotting these values (t+1 vs t) is another way of finding attractors or equilibrium -->
-
 <!-- Plotting these values (t+1 vs t) is another way of finding attractors or equilibrium. Where the points converge demonstrates the attractors, at these points can quite confidently predict what the next value is going to be. At other points (at the singularities), it’s more difficult (singularities) -->
 
-
 ## Characteristics of dynamical systems
-- The butterfly-shaped Lorenz attractor at the top of this web page is an example: the path of the marble or airplane is constrained to certain limits and has a charcteristic trajectory, but it never quite follows the exact same path twice. 
+- The butterfly-shaped Lorenz attractor is an example: the path of the marble or airplane is constrained to certain limits and has a charcteristic trajectory, but it never quite follows the exact same path twice. 
 
 <!-- Give an example of Elk population: Carrying capacity of 100. A great many factors are responsible for changing the elk population: though it never goes extinct--nor increases to infinity--the simple swing circle from 120 to 80 and back again is disrupted and the peaks and valleys are a bit different each time.  -->
-
 
 ## Characteristics of dynamical systems
 Attractors can also be cycles, e.g. when one system driven by strong periodic forcing 
@@ -148,12 +134,12 @@ Aims:
 
 ```{r Task1 A simple population model}
 
-# Here is the model from the example slide above. Population density (A) at time t + 1 is dependent on the population densitiy at time t, multiplied by the birth rate (r). The second part of the equation (1-At) reduces the size of the population at higher values of A.
+# Here is the model describing population density of a species. Population density (A) at time t + 1 is dependent on the population densitiy at time t, multiplied by the birth rate (r). The second part of the equation (1-At) reduces the size of the population at higher values of A.
 
 # A[t+1] = r*A[t] * (1 - A[t])
 
 # Investigate the dynamical behaviour of the system for different levels of r. What happens as increase r past a certain point?
-# Use the lagged coordinate embedding technique as another way to shwo that the system is deterministic
+# Use the lagged coordinate embedding technique as another way to show that the system is deterministic
 # What happens if you add some random variation to the process?
 
 t <- 1:100
@@ -164,33 +150,28 @@ A <- rep(NA, length(t))
 A[1] <- starting.A
 
 for(i in 2: length(t)) {
-  A[i] <- r* A[i-1] * (1 -A[i-1]  ) 
+  A[i] <- r* A[i-1] * (1 -A[i-1]  )
 }
 A[is.infinite(A)] <- 0
 
 modelResult<- tibble(Time = t, A = A)
-modelResult %>% 
+modelResult %>%
 ggplot(aes(x = Time, y = A)) +
   geom_point() +
   geom_line(col = "black")
 
-#   
-
+#
 # b) Exploring the lagged coordinate embedding
-
-
 A.t1 <- c(A[2: length(t)], NA)
-
 lagPlot <- tibble(A.t1 = A.t1, A = A)
-lagPlot %>% 
+lagPlot %>%
 ggplot(aes(x= A.t1, y = A)) +
-  geom_point() 
+  geom_point()
 
 ```
 
 
 ## Exercise 2: Ecological stability in an exploited food system
-
 
 ```{r Task2 A simple population model}
 
@@ -224,27 +205,26 @@ ggplot(aes(x = Time, y = A)) +
   ylim(0,100)
 
 popDensityPlot
+```
 
-# a) Experiment how changing the different the parameters (e.g. growth rates) influences the shape of the growth. What happens when the starting value is greater than the carrying capacity?
+a) Use the code above to experiment how changing the different the parameters (e.g. growth rates) influences the shape of the growth. What happens when the starting value is greater than the carrying capacity?
 
-
-
-# b) Make a plot to show how rate of population growth (dA/dt) changes as a function of population density.
-
+b) Make a plot to show how rate of population growth (dA/dt) changes as a function of population density.
+```{r Task2b A simple population model- rate of population growth}
  modelResult %>% 
    ggplot(aes(x = A, y = dA.dt)) +
   geom_point() +
   geom_line(col = "black")
-  
+```  
 
-# c) One classical extension in the model is too add in an Allee effect, a minimum threshold density below which experiences a freefall into extinction. This is done by adding in an extra term to the logistic equation above. Modify the function above to investigate the Allee effect. This is a simple way of demonstrating how alternative equilibria can exist.
+c) One classical extension in the model is too add in an Allee effect, a minimum threshold density below which experiences a freefall into extinction. This is done by adding in an extra term to the logistic equation above. We have modified the function above to investigate the Allee effect. This is a simple way of demonstrating how alternative equilibria can exist.
 
-
+```{r Task2c A simple population model- add in the allee effect}
 t <- 1:100
 K <- 75 # Carrying capacity, range 50-100
 r <- 0.3 # Growth rate, range 0-1
 alpha <- 20
-starting.A <- 21 # runif(1,0,100) # sample the starting value
+starting.A <- 10 # runif(1,0,100) # sample the starting value
 
 A <- rep(NA, length(t))
 A[1] <- starting.A
@@ -270,12 +250,9 @@ ggplot(aes(x = Time, y = A)) +
    ggplot(aes(x = A, y = dA.dt)) +
   geom_point() +
   geom_line(col = "black")
- 
-popDensityPlot.allee
-growthRate.plot.allee
+
+cowplot::plot_grid(popDensityPlot.allee, growthRate.plot.allee, ncol = 1, labels = "auto", align = "hv", axis = "lr")
 ```
-
-
 
 ## What are critical transitions?
 - Semi-arid systems provide a classical example
@@ -289,17 +266,19 @@ growthRate.plot.allee
 - Alternative state states, and critical transitions can result (F1/F2 known as *critical bifurcation* points)
 
 
+## Exercise 3: Alternative equilibria in a consumer-producer system
+
+1. Task one:  
+
+Now, we can combine the logistic growth models of plant density (the producers), a simple consumer model, and investigate the impacts of alternative attractors that can result. In this model we can investigate the ideas of stability, instability and hysteresis.
+
+First, we need to investigate the properties of a model to describe how the rate of consumption changes at different consumption values. This model describes rate of consumption at given levels of food density (i.e. A in the logistic model above). As more food is available, animals will eat more, but the rate of consumption will reach an asymptote when the maximum consumption is reached. At very low levels there will be no consumption because the food supply is difficult to access (e.g because the food is hidden in crevices etc). This is formulated with the Hill equation:
+
+cons = g * A^p / (A^p + H^p)
+
+The power p gives the sigmoidal relationship, and g is the maximum food density. H is a half saturation coefficient. Change the parameters of this model in the worksheet to get a feel of how consumption is related to food availability.
 
 ```{r Task3 Alternative equilibria in a consumer-producer system}
-
-# Task one:  
-
-# Now, we can combine the logistic growth models of plant density (the producers), a simple consumer model, and investigate the impacts of alternative attractors that can result. In this model we can investigate the ideas of stability, instability and hysteresis.
-#First, we need to investigate the properties of a model to describe how the rate of consumption changes at different consumption values. This model describes rate of consumption at given levels of food density (i.e. A in the logistic model above). As more food is available, animals will eat more, but the rate of consumption will reach an asymptote when the maximum consumption is reached. At very low levels there will be no consumption because the food supply is difficult to access (e.g because the food is hidden in crevices etc). This is formulated with the Hill equation:
-
-# cons = g * A^p / (A^p + H^p)
-
-#The power p gives the sigmoidal relationship, and g is the maximum food density. H is a half saturation coefficient. Change the parameters of this model in the worksheet to get a feel of how consumption is related to food availability.
 
 g <- 75 # maximum consumption rate, g
 H <-  20  # Half saturation rate, H, determines centre point of sigmoidal curve
@@ -316,10 +295,11 @@ conPlot <- consumerModel %>%
   ylim(0,100)
 
 conPlot
+```
 
-#### Next step- combining consumption and logistic growth
+Step 2- combining consumption and logistic growth
 
-# Now, the logistic growth function and consumer model can be combined (Exercise 2b/ 2c). Note that the total consumption is dependent on the number of individuals, so the Hill equation above is multiplied by c (the number of consumers).
+# Now, the logistic growth function of the plants and the consumer model function can be combined. Note that the total consumption is dependent on the number of individuals, so the Hill equation above is multiplied by c (the number of consumers).
 
 # dA/dt = r*A *(1- A/K) - g*c * A^p/ A^p +H^p
 

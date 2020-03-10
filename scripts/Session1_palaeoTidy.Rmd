@@ -24,6 +24,7 @@ library(tidyverse)
 library(Bchron)
 library(ggpalaeo)
 library(rioja)
+library(vegan)
 ```
 
 ## Step 2: Do a Neotoma search
@@ -278,23 +279,114 @@ addClustZone(pt, clust = clust, nZone = 2)
 
 This is a basic introduction/ recap to plotting a palaeoecological stratgraphic data in R.
 
-1) Repeat the process for a different site in the Neotoma Database. Make a stratigraphic plot and for these data and document the decisions that you make along the way.
+- Repeat the process for a different site in the Neotoma Database. Make a stratigraphic plot and for these data and document the decisions that you make along the way.
 
-2) Run a principle components analysis on the palaeoecological dataset and plot the first principle coordinate axes against time
-- Extract a long-table by depth and age and filter so that only the abundant taxa are used
-- Use vegan::rda or princomp to fit the principle components model
-- Use XXX to make a plot of the first two principle components and group by samples and species
+- Run a principle components analysis on the palaeoecological dataset and plot the first principle coordinate axes against time
 
+1. Extract a long-table by depth and age and filter so that only the abundant taxa are used
+```{r pca example 1, echo = TRUE}
+site_to_pca <- site_to_plot2 %>% select(-age, -depth)
+depth <-site_to_plot2$depth
+age <-site_to_plot2$age
+```
+
+2. Use vegan::rda or princomp to fit the principle components model
+```{r pca example 2, echo = TRUE}
+pca_mod <- vegan::rda(site_to_pca)
+summary(pca_mod)
+biplot(pca_mod)
+screeplot(pca_mod)
+```
+
+3. Extract the sample scores, convert to tibble and add the ages, then change to long-table format
+
+```{r pca example 4, echo = TRUE}
+sample_scores <- scores(pca_mod)$sites %>% 
+  as_tibble() %>% 
+  mutate(age = age, depth = depth) %>% 
+  pivot_longer(cols = c("PC1", "PC2"), names_to = "PC_axis", values_to = "PC_units")
+```
+
+4. Make a plot of these through time
+```{r pca example 5, echo = TRUE}
+pca_plot_time <- sample_scores %>%  
+  ggplot(aes(x = age, y = PC_units, group = PC_axis)) +
+  geom_point() +
+  geom_line() +
+  facet_grid(PC_axis~.)
+```
+
+For some nice examples of plotting pca biplots see:
 http://www.sthda.com/english/articles/31-principal-component-methods-in-r-practical-guide/118-principal-component-analysis-in-r-prcomp-vs-princomp/
 
-3) Use the chron control table to make a new set of age models for a site using CLAM, Bchron or BACON.
 
-- Download chron control tibble for a given site
-- Rewrite this file in the appropriate format for BChron or clam
-- Run the age modelling algorithm
-- Extract the age and depth information
-- Append to the tibble
-- Replot using these dates instead
+Use the chron control table to make a new set of age models for a site using BACON.
+install.packages("rbacon")
+library(rbacon)
+
+1. Get chron control tibble for a given site and align with the pollen data
+```{r prepare bacon age model data, echo = TRUE}
+chroncontrol_tibble <- tibble( dataset.id = as.numeric(names(chroncontrol_table)), 
+                                     chron_control = map(chroncontrol_table, "chron.control")
+                                    ) 
+pollen_SA_tibble <- pollen_SA_tibble %>% left_join(chroncontrol_tibble, by= "dataset.id")
+```
+
+2. Extract the chron control table for the site of interest and rewrite it for BACON
+```{r bacon age model, echo = TRUE}
+
+handle_want <- "KLAARFONT"
+dir.create(paste0("Plum_runs/", handle_want))
+
+x <- pollen_SA_tibble %>% filter(collection.handle == handle_want) %>% select(chron_control)
+
+bacon_col_names <- c("labID", "age", "error", "depth")
+bacon_table <- tibble(labID = x[[1]][[1]]$chron.control.id,
+                      age = x[[1]][[1]]$age,
+                      error = (x[[1]][[1]]$age.old - x[[1]][[1]]$age.young),
+                      depth = x[[1]][[1]]$depth,
+                      control.type = x[[1]][[1]]$control.type) %>% 
+  mutate(cc = 0) %>% 
+  mutate(cc = replace(cc, control.type == "Radiocarbon", 3 )) %>% # Southern hemisphere curve
+  select(-control.type)
+
+write_csv(bacon_table, path = paste0("Plum_runs/", handle_want,"/",handle_want, ".csv"))
+```
+
+3. Run the age modelling algorithm
+```{r bacon age model run, echo = TRUE}
+# Bacon(core = handle_want,
+#       depths = depth,
+#       thick = 20
+#       )
+```
+
+4. Import the new age and depth information
+```{r bacon age import, echo = TRUE}
+newAges <- read_delim(paste0("Plum_runs/", handle_want,"/",handle_want, "_26_ages.txt"), delim = "\t")
+```
+
+6. Replot using these dates instead
+```{r bacon age import, echo = TRUE}
+mgp <- c(2, 0.25, 0)
+par(tcl = -0.15, mgp = mgp)#shorter axis ticks - see ?par
+pt_age <- strat.plot(
+  d = site_to_plot_spp, 
+  yvar = newAges$median,
+  y.rev = TRUE, #reverse direction of y-axis
+  scale.percent = TRUE, #use constant scale for all taxa
+  srt.xlabel = 45, #rotate x-label by 45 degrees
+  cex.xlabel = 0.8, #smaller font
+  mgp = mgp,
+  xRight = 0.98, #right margin
+  xLeft = 0.21, #left margin with space for 2nd axis
+  yTop = 0.60, #top margin
+  yBottom = 0.1, #bottom margin
+  ylabel = "Age (cal yr BP)", 
+  clust = clust
+  )
+```
+
 
 4) Make a function which can automatically plot a simple stratigraphic diagram for any site and save it in a directory in the project folder. This is useful for inspecting sites later when doing multi-site syntheses.
 
