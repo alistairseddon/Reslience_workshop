@@ -1,0 +1,419 @@
+---
+title: 'Session 1: R Neotoma refresher'
+author: "Alistair Seddon"
+date: "2/20/2020"
+output:
+  slidy_presentation: default
+  ioslides_presentation: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+## Goals
+- To download and process data from the Neotoma database, and produce a pollen diagram.
+- To import your own datafile and produce a pollen diagram by depth
+- To align the data with a newly calculated age depth model and replot the data by age
+
+## Step 1: Install the required libraries (R Packages) 
+```{r Step 1, echo = TRUE}
+# Libraries
+library(neotoma)
+library(tidyverse)
+library(Bchron)
+library(ggpalaeo)
+library(rioja)
+library(vegan)
+```
+
+## Step 2: Do a Neotoma search
+```{r Step 2, echo = TRUE}
+pollen.sites <- get_dataset(datasettype = "pollen", gpid = "South Africa")
+# Could expand the search and do loc = c c(lonW, latS, lonE, latN)
+# Geopolitical units from http://api.neotomadb.org/apdx/geopol.htm
+
+# see ?get_dataset for more information
+pollen_data <- pollen.sites %>% get_download()
+chroncontrol_table <- pollen_data %>% get_chroncontrol()
+#save.image("data/input/Neotoma.RData") 
+
+# NB If internet isnt' working, we can just load in the image here
+# load("data/input/Neotoma.RData")
+```
+
+## Can inspect the data that we have downloaded
+```{r Step 2a, echo = TRUE}
+pollen_data
+names(pollen_data)
+```
+
+## Can inspect the data that we have downloaded
+```{r Step 2b, echo = TRUE}
+chroncontrol_table
+```
+
+## Using the `tidyverse` map functions
+- These are useful functions to extract the same data objects from different items in a list
+e.g.
+```{r map, echo = TRUE}
+str(pollen.sites[[1]], max.level = 2) 
+map_example <-  map(pollen.sites, "dataset.meta")
+map_example
+map_df_example <- map_df(pollen.sites, "dataset.meta")
+map_df_example
+```
+
+## Build a table with required metadata information
+Can use the mapdf function in a pipe to extract information from the pollen.site table
+Things we probably need will be dataset.id, lat, long, elevation. 
+
+```{r Build a tibble , echo = TRUE}
+# Gives the dataset information
+dataset_info <- pollen.sites %>% 
+              map_df("dataset.meta") %>% 
+              bind_cols(pollen.sites %>%  map_df("site.data")) %>% 
+              select(dataset.id, site.id, site.name, 
+                     collection.handle, collection.type, 
+                     long, lat, elev) 
+dataset_info
+```
+
+## Step 3: Extract the count data for a single site/ multiple sites
+```{r Step 3, echo = TRUE}
+x <- pollen_data[[1]] # Access the first object in the get_download object
+
+# gives the same as:
+x <- pollen_data[["41627"]]
+str(x, max.level = 1)  # this shows how to access all the information you would need from the pollen data object
+
+counts <- x$counts 
+# Or you can use the Neotoma function to extract the counts
+counts<- neotoma::counts(x)
+head(counts)
+
+# Can use map to access all the counts and store as a list
+count_data <- pollen_data %>% map("counts")  
+
+# NB. This gives the same as:
+# count_data <-  lapply(pollen_data, neotoma::counts)
+
+```
+
+## Build a table with required metadata information
+```{r Build a tibble: function, echo = TRUE}
+  count_data <- pollen_data %>% map("counts")  
+  taxa_data <-   pollen_data %>% map("taxon.list")
+  pollen_count_tibble <- tibble( dataset.id = as.numeric(names(count_data)),
+                                     count_data = count_data,
+                                     taxa_data = taxa_data,
+                                     sample_meta_data = map(pollen_data, "sample.meta")
+                                    )
+      
+ 
+# Combine them into one useful tibble (dataset_info object created previously)
+  pollen_SA_tibble <- left_join(pollen_count_tibble, dataset_info,  by = "dataset.id")
+```
+
+Now we have all the counts, sample data and taxa data in one useable tibble
+```{r Inspect tibble: function, echo = TRUE}
+pollen_SA_tibble
+```
+
+## Plotting a  simple stratigraphic diagram for a single site
+
+Select an indvidual site with collection handle `KLAARFONT`
+
+```{r basic-plot: function, echo = TRUE}
+# Let's do it for a single site 
+x <- pollen_SA_tibble %>% filter(collection.handle == "KLAARFONT")
+x
+```
+
+## Plotting a  simple stratigraphic diagram for a single site
+
+```{r basic-plot2, echo = TRUE}
+# get our information from our tibble
+cnts <- x$count_data[[1]] %>% 
+  as.data.frame() %>% 
+  rownames_to_column(var= "sample.id") 
+
+meta <- x$sample_meta_data[[1]] %>% 
+  select(sample.id, age, depth) %>% 
+  mutate(sample.id = as.character(sample.id))
+
+taxa <- x$taxa_data[[1]] %>% mutate_all(as.character)
+
+# Create a long-version of the table
+site_to_plot <- meta %>% 
+  left_join(cnts, by= "sample.id") %>% 
+  select(-sample.id) %>% 
+  pivot_longer(cols = -c("age", "depth"), names_to = "taxon.name", values_to = "count") %>%
+  left_join(taxa, by = "taxon.name")
+```
+
+Now is a good time to check taxa/ ecological groups we have. It's useful to have the [Neotoma database manual](https://www.neotomadb.org/uploads/NeotomaManual.pdf) open to check what terms mean. 
+
+```{r check-variable.element, echo = TRUE}
+site_to_plot %>% count(variable.element)
+
+eco_types <- get_table("EcolGroupTypes")
+eco_types %>% 
+  semi_join(site_to_plot, by = c("EcolGroupID" = "ecological.group")) %>%
+  select(EcolGroupID, EcolGroup)
+
+
+site_to_plot %>% filter(ecological.group == "SEED", count > 0) %>% 
+  select(taxon.name, count) %>% 
+  group_by(taxon.name) %>% 
+  summarise(n = n(), max = max(count))
+
+
+```
+So `SEED` is an unidentified monocot present at low abundances. Should we delete it?
+
+```{r zap-eco-groups, echo = TRUE}
+#remove unwanted variable.element/ecological.group
+site_to_plot <- site_to_plot %>% 
+  filter(!ecological.group %in% c("SEED"))
+#use `%in%` not `==`
+```
+
+What about `VACR`/ `AQVP`?
+```{r zap-eco-groups 2, echo = TRUE}
+#remove unwanted variable.element/ecological.group
+site_to_plot %>% filter(ecological.group == "VACR" | ecological.group == "AQVP", count > 0) %>% 
+  select(taxon.name, count) %>% 
+  group_by(taxon.name) %>% 
+  summarise(n = n(), max = max(count))
+
+# I'm going to delete them so we just have pollen
+site_to_plot <- site_to_plot %>% 
+  filter(!ecological.group %in% c("VACR", "AQVP"))
+```
+
+This is a good time to check the count sums. It might be prudent to delete any samples with very low counts, but in this site the count sums are all greater than 200
+```{r countsums, echo = TRUE}
+#check count sums
+site_to_plot %>% 
+  group_by(depth) %>% 
+  summarise(s = sum(count)) %>% 
+  arrange(s) %>% 
+  slice(1:5)
+
+site_to_plot %>% 
+  group_by(depth) %>% 
+  summarise(s = sum(count)) %>% 
+  arrange(desc(s)) %>% 
+  slice(1:5)
+
+```
+
+Now we can calculate percent and remove the rare taxa 
+```{r, echo = TRUE}
+#calculate percent
+site_to_plot <- site_to_plot %>% 
+  group_by(depth) %>% 
+  mutate(percent = count/sum(count) * 100) 
+#remove rare taxa
+site_to_plot1 <- site_to_plot %>% 
+  group_by(taxon.name) %>% 
+  filter(
+    sum(percent > 0) >= 3, #must be in at least three samples
+    max(percent) > 3) #must have a max percent > 3
+```
+
+Now we can use `pivot_wider` to reshape the data back into a species x samples data.frame that we can plot with `rioja::strat.plot`. For convenience, I'm separating the species data from the age/depth data.
+
+```{r pivot-wider, echo = TRUE}
+site_to_plot2 <- site_to_plot1 %>% 
+  select(age, depth, taxon.name, percent) %>% 
+  pivot_wider(names_from = "taxon.name", values_from = "percent")
+site_to_plot_spp <- site_to_plot2 %>% select(-age, -depth) %>% 
+  as.data.frame() #needed as strat.plot does not like tibble
+```
+
+Now we can plot the stratigraphy. 
+```{r basic-plot, echo = TRUE}
+#strat.plot
+strat.plot(site_to_plot_spp, yvar = site_to_plot2$depth)
+```
+
+There are many options we can use to change this, and these were covered in the previous workshop. 
+For example, ordering by the species group and by the maximum abundance in the core would be one option.
+
+We could also run a constrained cluster analysis
+```{r clust, echo = TRUE}
+site_to_plot_dist <- dist(sqrt(site_to_plot_spp /100))#chord distance
+clust <- chclust(site_to_plot_dist , method = "coniss")
+bstick(clust)#two  groups
+```
+
+Now we can make a better plot.
+```{r better-plot, echo = TRUE}
+#set up mgp (see ?par) 
+mgp <- c(2, 0.25, 0)
+par(tcl = -0.15, mgp = mgp)#shorter axis ticks - see ?par
+pt <- strat.plot(
+  d = site_to_plot_spp, 
+  yvar = site_to_plot2$depth,
+  y.rev = TRUE, #reverse direction of y-axis
+  scale.percent = TRUE, #use constant scale for all taxa
+  srt.xlabel = 45, #rotate x-label by 45 degrees
+  cex.xlabel = 0.8, #smaller font
+  mgp = mgp,
+  xRight = 0.98, #right margin
+  xLeft = 0.21, #left margin with space for 2nd axis
+  yTop = 0.60, #top margin
+  yBottom = 0.1, #bottom margin
+  ylabel = "Depth cm", 
+  clust = clust
+  )
+#add zone boundaries
+addClustZone(pt, clust = clust, nZone = 2)
+#add a secondary scale
+# secondary_scale(pt, yvar = site_to_plot2$depth, yvar2 = site_to_plot2$age, ylabel2 = "Date yr BP", n = 10)
+```
+
+## Other exercises
+
+This is a basic introduction/ recap to plotting a palaeoecological stratgraphic data in R.
+
+- Repeat the process for a different site in the Neotoma Database. Make a stratigraphic plot and for these data and document the decisions that you make along the way.
+
+- Run a principle components analysis on the palaeoecological dataset and plot the first principle coordinate axes against time
+
+1. Extract a long-table by depth and age and filter so that only the abundant taxa are used
+```{r pca example 1, echo = TRUE}
+site_to_pca <- site_to_plot2 %>% select(-age, -depth)
+depth <-site_to_plot2$depth
+age <-site_to_plot2$age
+```
+
+2. Use vegan::rda or princomp to fit the principle components model
+```{r pca example 2, echo = TRUE}
+pca_mod <- vegan::rda(site_to_pca)
+summary(pca_mod)
+biplot(pca_mod)
+screeplot(pca_mod)
+```
+
+3. Extract the sample scores, convert to tibble and add the ages, then change to long-table format
+
+```{r pca example 4, echo = TRUE}
+sample_scores <- scores(pca_mod)$sites %>% 
+  as_tibble() %>% 
+  mutate(age = age, depth = depth) %>% 
+  pivot_longer(cols = c("PC1", "PC2"), names_to = "PC_axis", values_to = "PC_units")
+```
+
+4. Make a plot of these through time
+```{r pca example 5, echo = TRUE}
+pca_plot_time <- sample_scores %>%  
+  ggplot(aes(x = age, y = PC_units, group = PC_axis)) +
+  geom_point() +
+  geom_line() +
+  facet_grid(PC_axis~.)
+```
+
+For some nice examples of plotting pca biplots see:
+<!-- http://www.sthda.com/english/articles/31-principal-component-methods-in-r-practical-guide/118-principal-component-analysis-in-r-prcomp-vs-princomp/ -->
+
+
+Use the chron control table to make a new set of age models for a site using BACON.
+<!-- install.packages("rbacon") -->
+<!-- library(rbacon) -->
+
+1. Get chron control tibble for a given site and align with the pollen data
+```{r prepare bacon age model data, echo = TRUE}
+library(rbacon)
+chroncontrol_tibble <- tibble( dataset.id = as.numeric(names(chroncontrol_table)), 
+                                     chron_control = map(chroncontrol_table, "chron.control")
+                                    ) 
+pollen_SA_tibble <- pollen_SA_tibble %>% left_join(chroncontrol_tibble, by= "dataset.id")
+```
+
+2. Extract the chron control table for the site of interest and rewrite it for BACON
+```{r bacon age model, echo = TRUE}
+handle_want <- "KLAARFONT"
+dir.create(paste0("Plum_runs/", handle_want))
+
+x <- pollen_SA_tibble %>% filter(collection.handle == handle_want) %>% select(chron_control)
+
+bacon_col_names <- c("labID", "age", "error", "depth")
+bacon_table <- tibble(labID = x[[1]][[1]]$chron.control.id,
+                      age = x[[1]][[1]]$age,
+                      error = (x[[1]][[1]]$age.old - x[[1]][[1]]$age.young),
+                      depth = x[[1]][[1]]$depth,
+                      control.type = x[[1]][[1]]$control.type) %>% 
+  mutate(cc = 0) %>% 
+  mutate(cc = replace(cc, control.type == "Radiocarbon", 3 )) %>% # Southern hemisphere curve
+  select(-control.type)
+
+#write_csv(bacon_table, path = paste0("Plum_runs/", handle_want,"/",handle_want, ".csv"))
+```
+
+3. Run the age modelling algorithm
+```{r bacon age model run, echo = TRUE}
+# Bacon(core = handle_want,
+#       depths = depth,
+#       thick = 20
+#       )
+```
+
+4. Import the new age and depth information
+```{r bacon age import, echo = TRUE}
+newAges <- read_delim(paste0("Plum_runs/", handle_want,"/",handle_want, "_26_ages.txt"), delim = "\t")
+```
+
+6. Replot using these dates instead
+```{r bacon age import 2, echo = TRUE}
+mgp <- c(2, 0.25, 0)
+par(tcl = -0.15, mgp = mgp)#shorter axis ticks - see ?par
+pt_age <- strat.plot(
+  d = site_to_plot_spp, 
+  yvar = newAges$median,
+  y.rev = TRUE, #reverse direction of y-axis
+  scale.percent = TRUE, #use constant scale for all taxa
+  srt.xlabel = 45, #rotate x-label by 45 degrees
+  cex.xlabel = 0.8, #smaller font
+  mgp = mgp,
+  xRight = 0.98, #right margin
+  xLeft = 0.21, #left margin with space for 2nd axis
+  yTop = 0.60, #top margin
+  yBottom = 0.1, #bottom margin
+  ylabel = "Age (cal yr BP)", 
+  clust = clust
+  )
+```
+
+
+4) Make a function which can automatically plot a simple stratigraphic diagram for any site and save it in a directory in the project folder. This is useful for inspecting sites later when doing multi-site syntheses.
+
+
+
+
+There are two general methods to perform PCA in R :
+
+Spectral decomposition which examines the covariances / correlations between variables
+Singular value decomposition which examines the covariances / correlations between individuals
+The function princomp() uses the spectral decomposition approach. The functions prcomp() and PCA()[FactoMineR] use the singular value decomposition (SVD).
+
+
+Arguments for prcomp():
+x: a numeric matrix or data frame
+scale: a logical value indicating whether the variables should be scaled to have unit variance before the analysis takes place
+Arguments for princomp():
+x: a numeric matrix or data frame
+cor: a logical value. If TRUE, the data will be centered and scaled before the analysis
+scores: a logical value. If TRUE, the coordinates on each principal component are calculated
+
+
+
+```{r pca}
+# install.packages("factoextra")
+```
+
+
+
+

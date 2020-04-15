@@ -213,7 +213,6 @@ plot.stars(PDO.RS_ar) # Doesn't work needs fixing
 #- What about alternatives?
 
 ### Generalised non-linear regression is a useful tool for analysing break-points in time series
-
 # Fitting a model by ordinary least squares
 # aims to miminise the difference between predicted value and the residuals.
 # Makes certain assumptions:

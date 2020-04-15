@@ -1,0 +1,861 @@
+---
+title: 'Session 3: GAMs'
+author: "Alistair Seddon"
+date: "2/27/2020"
+output:
+  slidy_presentation: default
+  ioslides_presentation: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+Today we look at Generalised Additive Models (GAMs).
+- Much of the work today is based around the recent paper by Simpson (2018): Modelling
+palaeoecological time series using generalized additive models, *Frontiers in Ecology and Evolution*
+- For more detail for everything we cover here, I recommend looking at this paper and following through in detail, but we will use the examples provided in the paper
+
+## Set up
+We need the following packages for today.
+```{r setup2, echo = TRUE}
+
+# install.packages("tidyverse")
+# install.packages("cowplot")
+# install.packages("mgcv")
+# install.packages("devtools")
+# devtools::install_github("gavinsimpson/gratia") # Doesn't work. Need to update R
+# install.packages("neotoma")
+# install.packages("tidyverse")
+
+library("tidyverse")
+library("neotoma")
+library("nlme")
+library("mgcv")
+# library("scam")
+library("ggplot2")
+library("cowplot")
+theme_set(theme_cowplot())
+library("gratia")
+
+```
+## Set up
+And these are two datasets used in the Simpson paper.
+```{r setup3, echo = TRUE}
+# Import the two datasets from the Simpson 2018 paper and process according to it's Supplementary Material
+##  Small Water data
+small <- readRDS("./data/small-water-isotope-data.rds")
+head(small)
+
+# Braya so data set
+braya <- read.table("./data/DAndrea.2011.Lake Braya So.txt",
+skip = 84) 
+
+## clean up variable names
+names(braya) <- c("Depth", "DepthUpper", "DepthLower", "Year", "YearYoung", "YearOld", "UK37")
+## add a variable for the amount of time per sediment sample 
+braya <- transform(braya, sampleInterval = YearYoung - YearOld)
+head(braya)
+
+```
+
+## Example datasets (From Simpson 2018)
+```{r plot data, echo = FALSE}
+## Figure labels
+d15n_label <- expression(delta^{15}*N)
+braya_ylabel <- expression(italic(U)[37]^{italic(k)})
+
+# Plots
+small_plt <- ggplot(small, aes(x = Year, y = d15N)) +
+    geom_point() +
+    labs(y = d15n_label, x = "Year CE")
+
+braya_plt <- ggplot(braya, aes(x = Year, y = UK37)) +
+    geom_line(colour = "grey") +
+    geom_point() +
+    labs(y = braya_ylabel, x = "Year CE")
+
+plot_grid(small_plt, braya_plt, ncol = 1, labels = "auto", align = "hv", axis = "lr")
+
+```
+
+
+## Introduction to GAM
+- So far we looked at non-linear modelling of palaeoecological time series
+- This is OK if we are specifically looking to test for, e.g. a step- change in mean or a linear trend
+- But palaeoecological time-series can often be far more complex
+- What is the best way to smooth these data?
+- How can we distinguish a period of trend from noisey variations in the data?
+
+```{r plot data2, echo = FALSE}
+## Figure labels
+d15n_label <- expression(delta^{15}*N)
+braya_ylabel <- expression(italic(U)[37]^{italic(k)})
+
+# Plots
+small_plt <- ggplot(small, aes(x = Year, y = d15N)) +
+    geom_point() +
+    labs(y = d15n_label, x = "Year CE")
+
+braya_plt <- ggplot(braya, aes(x = Year, y = UK37)) +
+    geom_line(colour = "grey") +
+    geom_point() +
+    labs(y = braya_ylabel, x = "Year CE")
+
+plot_grid(small_plt, braya_plt, ncol = 1, labels = "auto", align = "hv", axis = "lr")
+
+```
+
+## Linear model to describe trends in the data
+- By now we should be familiar with a linear model describe a trend in the time series $T$ of observations $y_t$ at observation times $x_t$ with $t$
+
+\begin{equation} \label{eq:linear-model}
+y_t = \beta_0 + \beta_1 x_t + \varepsilon_t \,,
+\end{equation}
+
+where $\beta_0$ is a constant term, the model *intercept*, representing the expected value of $y_t$ where $x_t$ is 0. $\beta_1$ is the *slope* of the best fit line through the data
+
+- Unknowns are commonly estimated using least squares by minimising the sum of squared errors, $\sum_t \varepsilon_t^2$. 
+- Assume the residuals are independently drawn from a Gaussian distribution and are identically distributed: $\varepsilon_t \stackrel{iid}{\sim} \mathcal{N}(0, \sigma^2)$. 
+
+## Polynomials to increase the complexity
+Now $y_t$ is dependent on polynomials of $x_t$:
+\begin{align} \label{eq:polynomial-model}
+y_t &= \beta_0 + \beta_1 x_t + \beta_2 x_t^2 + \cdots + \beta_P x_t^P + \varepsilon_t \\
+    &= \beta_0 + \sum_{p = 1}^P \beta_p x_t^p  + \varepsilon_t \,, \nonumber
+\end{align}
+where polynomials of $x_t$ up to order $P$ are used. 
+
+- Allows for more complex trends but can still suffer from problems
+- E.g. highest order polynimial ($P = 10$) captures the major trends in the time series, at the expense of potential overfitting at the points in the curve when the δ^15^N is more stable
+
+```{r polynomial-example}
+p <- c(1,3,5,10)
+N <- 300
+newd <- with(small, data.frame(Year = seq(min(Year), max(Year), length = N)))
+polyFun <- function(i, data = data) {
+    lm(d15N ~ poly(Year, degree = i), data = data)
+}
+mods <- lapply(p, polyFun, data = small)
+pred <- vapply(mods, predict, numeric(N), newdata = newd)
+colnames(pred) <- p
+newd <- cbind(newd, pred)
+polyDat <- gather(newd, Degree, Fitted, - Year)
+polyDat <- transform(polyDat, Degree = ordered(Degree, levels = p))
+
+
+# Plot the data
+small_plt + geom_line(data = polyDat, mapping = aes(x = Year, y = Fitted, colour = Degree)) +
+    scale_color_brewer(name = "Degree", palette = "PuOr") +
+    theme(legend.position = "right")
+```
+
+## Other methods to describe trends
+- Loess smoothing has commonly been used in the past (e.g. XXXX)
+- Fits a smooth line through data by fitting weighted least squares (WLS) models to observations within window
+- Weights determined by how proximity of an observation to focal point (x-axis only)
+- Predicted value of the weighted regression gives you the smoothed value at the focal point
+- The interim values are updated using weights based on how far in the y-axis direction the interim smoothed value lies from the observed value plus the x-axis distance weights
+- Join the smoothed values to get the loess smoother
+- But this requires a number of subject judgements to be applied to the data (e.g. window size, whether to use 1/ 2 degree polynomials in the window, how to do the weighting)
+- Cross Validation can be used to determine these parameters but this is complicated due to time ordering of the data
+-In general the approach is subjective
+
+
+```{r lowess-example}
+f.span <- c(0.75,0.5, 0.25, 0.1)
+N <- 300
+newd <- with(small, data.frame(Year = seq(min(Year), max(Year), length = N)))
+loessFun <- function(i, data = data) {
+    loess(d15N ~ Year, span = i, data = data)
+}
+mods <- lapply(f.span, loessFun, data = small)
+pred <- vapply(mods, predict, numeric(N), newdata = newd)
+
+colnames(pred) <- f.span
+newd <- cbind(newd, pred)
+loessDat <- gather(newd, Span, Fitted, - Year)
+loessDat <- transform(loessDat, Span = ordered(Span, levels = f.span))
+
+
+# Plot the data
+small_plt + 
+  geom_line(data = loessDat, mapping = aes(x = Year, y = Fitted, colour = Span)) +
+    scale_color_brewer(name = "Span", palette = "PuOr") +
+    theme(legend.position = "right")
+```
+
+## Generalised Additive Models (GAMS)
+- GAMs (Hastie and Tibshirani, 1986, 1990; Yee and Mitchell, 1991; Ruppert et al., 2003; Wood, 2017) are a regression-based method for estimating trends
+- GAMs estimate smooth, non-linear trends in time series
+- Many advantages for palaeoecological trend detection.
+- E.g. can handle the irregular spacing of samples in time, smoothness of the trend can be estimated non-subjectively, are flexible to enable response variables drawn from many different distributions (e.g. Gaussian, Poisson, negative binomial)
+
+## Generalised Additive Models (GAMS)
+The GAM version of the linear model \eqref{eq:linear-model} is
+\begin{equation} \label{eq:additive-model}
+y_t = \beta_0 + f(x_t) + \varepsilon_t \, ,
+\end{equation}
+where the linear effect of time (the $\beta_1 x_t$ part) has been replaced by a smooth function of time, $f(x_t)$. 
+(From Simpson 2018)
+- The smooth has the result that the GAM is not restricted to shapes fitted by global polynomial functions.
+- The data determines the shape of the specific trend.
+
+## GAMs and the relationship to GLMs
+- The generalised linear model provides a common framework for modelling different types of data that are not Gaussian (count, proportion, binary)
+- Link function is used to transform values from the response scale back to the scale on the linear predictor
+- GLM is parametric in nature (i.e. linear or polynomial), while the GAM uses the smooth functions of the covariates instead
+\begin{subequations}
+\label{eq:gam}
+\begin{align}
+y_t &\sim \text{EF}(\mu_t, \Theta) \label{eq:gam-ef} \\
+g(\mu_t) &= \beta_0 + f(x_t) \label{eq:gam-linear-pred} \\
+\mu_t    &= g^{-1}(\beta_0 + f(x_t)), \label{eq:gam-inverse} 
+\end{align}
+\end{subequations}
+where $\mu_t$ is the expected value (e.g.\ the mean count or the probability of occurrence) of the random variable $Y_t$ ($\mu_t \equiv \mathbb{E}(Y_t)$) of which we have observations $y_t$. $g$ is the link function, an invertible, monotonic function, such as the natural logarithm, and $g^{-1}$ is its inverse (From Simpson 2018)
+
+In \eqref{eq:gam-ef}, we further assume that the observations are drawn from a member of the exponential family of distributions --- such as the Poisson for count data, the binomial for presence/absence or counts from a total --- with expected value $\mu_t$ and possibly some additional parameters $\Theta$ ($y_t \sim \text{EF}(\mu_t, \Theta)$).
+
+# How does it work in practice?:The Smooth function
+- Smooth is denoted as $f(x_t)$. 
+- In practice the smooth is represented as a *basis*: a set of functions that span a space of smooths that contains the true $f(x_t)$ or a close approximation of it.
+- Basis functions derive from the basis expansion of a covariate
+- If $b_j(x_t)$ is the $j$th basis function of $x_t$, the smooth $f(x_t)$ can be represented as a weighted sum of basis functions
+\begin{equation*}
+f(x_t) = \sum_{j = 1}^{k} b_j(x_t) \beta_j \,,
+\end{equation*}
+where $\beta_j$ is the weight applied to the $j$th basis function.
+
+# Splines
+- Polynomial model is one type of basis function where the weights are the estimated coefficients and there is a basis function for each polynomial term in the model
+- But polynomials aren't the best fitting models for complex palaeoecological data, especially because polynomial basis functions are global
+- A common function for GAMs is the splines (cubic regression splines (CRS/ thin-plate regression splines (TPRS))
+-A cubic spline is a smooth curve comprised of sections of different cubic polynomicals, with each section joined at a location (*knots*)
+- At the knots the two sections meeting have the same value and the same 1st and 2nd derivative, so the sections join smoothly [@Wood2017-qi, sec. 5.3.1].
+- Figure below: a) the data, with the 7 different knots (tick marks on x axis) and the different basis functions from the CRS; b) the same CRS weighted by the different coefficients of $\\beta_j$ and the resulting trend line
+```{r basis-function-example-plot (Simpson 2018)}
+## set up
+k <- 7
+df <- with(small, data.frame(Year = seq(min(Year), max(Year), length = 200)))
+knots <- with(small, list(Year = seq(min(Year), max(Year), length = k)))
+sm <- smoothCon(s(Year, k = k, bs = "cr"), data = df, knots = knots)[[1]]$X
+colnames(sm) <- levs <- paste0("F", seq_len(k))
+basis <- gather(cbind(sm, df), Fun, Value, -Year)
+basis <- transform(basis, Fun = factor(Fun, levels = levs))
+sm2 <- smoothCon(s(Year, k = k, bs = "cr"), data = small, knots = knots)[[1]]$X
+beta <- coef(lm(d15N ~ sm2 - 1, data = small))
+scbasis <- sweep(sm, 2L, beta, FUN = "*")
+colnames(scbasis) <- levs <- paste0("F", seq_len(k))
+fit <- cbind(df, fitted = rowSums(scbasis))
+scbasis <- gather(cbind(scbasis, df), Fun, Value, -Year)
+scbasis <- transform(scbasis, Fun = factor(Fun, levels = levs))
+ylims <- range(basis$Value, scbasis$Value, small$d15N)
+p1 <- ggplot(basis, aes(x = Year, y = Value, group = Fun, colour = Fun)) +
+    geom_path() +
+    scale_x_continuous(breaks = knots$Year, labels = NULL, minor_breaks = NULL) +
+    scale_y_continuous(limits = ylims) +
+    scale_colour_discrete(name = "Basis Function") +
+    theme(legend.position = "none") +
+    geom_point(data = small, mapping = aes(x = Year, y = d15N), inherit.aes = FALSE, size = 2, colour = "grey70") +
+    labs(y = d15n_label, x = "Year CE (Knots)")
+p2 <- ggplot(scbasis, aes(x = Year, y = Value, group = Fun, colour = Fun)) +
+    geom_path() +
+    scale_x_continuous(breaks = knots$Year, labels = NULL, minor_breaks = NULL) +
+    scale_y_continuous(limits = ylims) +
+    scale_colour_discrete(name = "Basis Function") +
+    theme(legend.position = "none") +
+    geom_point(data = small, mapping = aes(x = Year, y = d15N), inherit.aes = FALSE, size = 2, colour = "grey70") +
+    geom_line(data = fit, mapping = aes(x = Year, y = fitted), inherit.aes = FALSE,
+              size = 0.75, colour = "black") +
+    labs(y = d15n_label, x = "Year CE (Knots)")
+
+pbasis <- plot_grid(p1, p2,  nrow = 2, align = "hv", labels = "auto")
+pbasis
+```
+
+# Cubic Regression Spline
+- Efficient way to parameterise the CRS is to estimate the value of the spline at the knots
+- Means that you can have amny fewer knots than datapoints, and the knots are often evenly distributed over the range of $x_t$ or at the quantiles of $x_t$.
+- Each basis function forms a column and the weights are estimated using least squares regression
+- Then weight each basis function by it's coefficient 
+- sum the values of the seven scaled basis functions to get the fitted value at $x_t$ (time)
+- Follow the code through here to see how this is done in simplified terms
+```{r fitting_gam_manually (Simpson 2018)}
+# k <- 7 
+# df <- with(small, data.frame(Year = seq(min(Year), max(Year), length = 200)))
+# knots <- with(small, list(Year = seq(min(Year), max(Year), length = k)))
+# sm <- smoothCon(s(Year, k = k, bs = "cr"), data = df, knots = knots)[[1]]$X 
+# colnames(sm) <- levs <- paste0("F", seq_len(k))
+# basis <- gather(cbind(sm, df), Fun, Value, -Year)
+# basis <- transform(basis, Fun = factor(Fun, levels = levs))
+# sm2 <- smoothCon(s(Year, k = k, bs = "cr"), data = small, knots = knots)[[1]]$X
+# beta <- coef(lm(d15N ~ sm2 - 1, data = small))
+# scbasis <- sweep(sm, 2L, beta, FUN = "*")
+# colnames(scbasis) <- levs <- paste0("F", seq_len(k))
+# fit <- cbind(df, fitted = rowSums(scbasis))
+
+pbasis
+```
+
+# Thin plate regression splines (after Simpson 2018)
+- CRS means that the number of location of knots need to be chosen
+- Thin plate regression splines (TPRS) ( @Duchon1977-jr) mean this element of subjectivity is removed
+- Can also estimate a smooth function of two or more variables, 
+- Thin plate splines have as many unknown parameters as there are unique combinations of covariate values in a data set [@Wood2017-qi, sec. 5.5.1], but it is uncomman to use as many basis functions per data points and this would be computationally expensive
+- Instead- can limit the number of TPS basis functions, known as low rank thin plate regression splines (TPRS) [@Wood2003-qy] using an eigen-decomposition of the basis functions and returning the eigenvectors associated with the $k$ largest eigenvalues.
+- Can still be computationally expensive for large datasets (e.g. 1000 observations)
+- E.g. A rank `r k` TPRS basis (i.e. one containing `r k` basis functions) is shown here
+
+```{r Thin plate example}
+tp <- smoothCon(s(Year, k = k, bs = "tp"), data = df)[[1]]$X
+colnames(tp) <- levs <- paste0("F", seq_len(k))
+tpbasis <- gather(cbind(tp, df), Fun, Value, -Year)
+tpbasis <- transform(tpbasis, Fun = factor(Fun, levels = levs))
+p3 <- ggplot(tpbasis, aes(x = Year, y = Value, group = Fun, colour = Fun)) +
+    geom_path() +
+    scale_colour_discrete(name = "Basis Function") +
+    theme(legend.position = "none") +
+    labs(y = d15n_label, x = "Year CE")
+p3
+```
+
+# Choosing the rank (size) of the basis expansion
+- Constrained by an upper limit of the number of data points
+- Can use `gam.check()` to test whether residuals are IID, or whether the model could improve with a further smooth term
+- Then refit the model with a greater rank (value of *k*)
+
+
+```{r gam check}
+fit_k20 <- gam(d15N ~ s(Year, k = 10), data = small)
+fit_k40 <- gam(d15N ~ s(Year, k = 40), data = small)
+
+par(mfrow = c(2,2))
+gam.check(fit_k20)
+par(mfrow = c(2,2))
+gam.check(fit_k40)
+```
+
+# How wiggly should the spline be?  
+-Wiggliness penalty used on the spine second derivative at any infinitesimal point in the interval spanned by $x_t$
+- The actual penalty used is the integrated squared second derivative of the spline
+\begin{equation} \label{eq:quadratic-penalty}
+\int_{\mathbb{R}} [f^{\prime\prime}]^2 dx = \boldsymbol{\beta}^{\mathsf{T}}\mathbf{S}\boldsymbol{\beta}\, .
+\end{equation}
+
+- $\mathbf{S}$ is the penalty matrix, $\mathcal{L}(\boldsymbol{\beta})$ are the parameter estimates (model coefficients)
+- this penalty built into a function which needs to be minimised to fit the GAM, known as the penalised likelihood$\mathcal{L}_p(\boldsymbol{\beta})$:
+\begin{equation*}
+\mathcal{L}_p(\boldsymbol{\beta}) = \mathcal{L}(\boldsymbol{\beta}) - \frac{1}{2} \lambda\boldsymbol{\beta}^{\mathsf{T}}\mathbf{S}\boldsymbol{\beta}\, .
+\end{equation*}
+
+Where $\mathcal{L}(\boldsymbol{\beta})$ is the likelihood of the model given the parameter estimates.
+
+# How wiggly should the smooth be (cont.)?  
+-The fraction of a half is there simply to make the penalised likelihood equal the penalised sum of squares in the case of a Gaussian model. 
+- $\lambda$ is known as the smoothness parameter and controls the extent to which the penalty contributes to the likelihood of the model.
+- At hight values of $\lambda = 10000$, model is effectively fitting a linear model through the data. 
+- As the value of $\lambda$ decreases, the fitted spline becomes increasingly wiggly. 
+- As $\lambda$ becomes very small, the resulting spline passes through most of the δ^15^N observations resulting in a model that is clearly over fitted to the data.
+<!-- In the extreme case of $\lambda = 0$ the penalty has no effect and the penalized likelihood equals the likelihood of the model given the parameters. At the other extreme, as $\lambda \rightarrow \infty$ the penalty comes to dominate $\mathcal{L}_p(\boldsymbol{\beta})$ and the wiggliness of $f(x_t)$ tends to $0$ resulting in an infinitely smooth function. In the case of a second derivative penalty, this is a straight line, and we recover the simple linear trend from \eqref{eq:linear-model} when assuming a Gaussian response. -->
+
+```{r penalty-example}
+K <- 40
+lambda <- c(10000, 1, 0.01, 0.00001)
+N <- 300
+newd <- with(small, data.frame(Year = seq(min(Year), max(Year), length = N)))
+fits <- lapply(lambda, function(lambda) gam(d15N ~ s(Year, k = K, sp = lambda), data = small))
+pred <- vapply(fits, predict, numeric(N), newdata = newd)
+op <- options(scipen = 100)
+colnames(pred) <- lambda
+newd <- cbind(newd, pred)
+lambdaDat <- gather(newd, Lambda, Fitted, - Year)
+lambdaDat <- transform(lambdaDat, Lambda = factor(paste("lambda ==", as.character(Lambda)), levels = paste("lambda ==", as.character(lambda))))
+options(op)
+
+op <- options(scipen = 100)
+small_plt + geom_line(data = lambdaDat, mapping = aes(x = Year, y = Fitted, group = Lambda),
+                      size = .75, colour = "#e66101") +
+    facet_wrap( ~ Lambda, ncol = 2, labeller = label_parsed)
+options(op)
+
+
+```
+
+# How to estimate $\lambda$?
+Two possible approaches: 
+1. choose $\lambda$ to minimises the prediction error of the model using AIC, cross-validation (CV) or generalized cross-validation [GCV; @Craven1978-nz]. GCV is less computationally intensive but can overfit the data
+2. Treat the smooth as a random effect, so $\lambda$ becomes a variance parameter to be estimated using maximum likelihood (ML) or restricted maximum likelihood [REML; @Wood2011-kn; @Wood2016-fx].
+
+- REML is the recommended means of fitting GAMs, though, where models have different fixed effects (covariates) they cannot be compared using REML, and ML selection should be used instead. 
+
+# Exercise: Fit a GAM to the two different datasets (based on SI of Simpson 2018)
+
+- The most common way to fit a GAM is to use the `gam()` function from the *mgcv* package.
+- Similar notation is used for linear models, but the linear predictor contains the smooth function: `y ~ s(x)`
+- Check the package help for the number of different options
+- Remember the recommended method is to use REML smoothness selection
+
+## Small Water
+1. Use `gam()` to fit a gam using and REML smoothness selection.
+
+2. Experiment what happens with a different basis function rank (change k). Find a suitable value of k
+
+3. Use the fitted model to predict a finer grid of points over a range of the time variable
+  - requires you to make a new dataset with, e.g. 200 datapoints across the min and max of the time variable
+  - predict the values at these new datapoints (`predict()`)
+  - create the 95% confidence interval by estimating the critical.t value based on the number of degrees of freedom in the model ( `crit.t <- qt(0.975, df = df.residual(m))` ), then finding the upper and lower boundaries of the 95% CI
+  - Plot the estimated trend, plus confidence intervals using the fitted data
+
+4. Now try fitting the model an AR1 process describing the correlation of datapoints in the residuals of the model using `gamm()` and `corCAR1()`. Inspect the performance of the model using `summary(mod$gam)`
+
+5. Inspect the correlation structure of the model using `intervals(m_2$lme, which = "var-cov")$corStruct`
+- Like yesterday make a plot which visualises the decay of autocorrelation through time in the residuals of this model
+
+6. Predict new values of the model with the autocorrelation term and plot
+
+```{r practical1} 
+# 1. Fit the gam
+m_1 <- gam(d15N ~ s(Year, k = 15), data = small, method = "REML")
+summary(m_1)
+
+# 2. Use gam.check() to explore whether the model has enough basis dimensions
+gam.check(m_1)
+
+# 3.
+
+## create new data to predict at; 200 evenly-spaced values over `Year` 
+newYear <- with(small, data.frame(Year = seq(min(Year), max(Year), length.out = 200)))
+## Predict from the fitted model; note we predict from the $gam part
+newYear <- cbind(newYear, data.frame(predict(m_1, newYear, se.fit = TRUE)))
+## Create the confidence interval
+crit.t <- qt(0.975, df = df.residual(m_1)) 
+newYear <- transform(newYear, 
+                     upper = fit + (crit.t * se.fit), 
+                     lower = fit - (crit.t * se.fit))
+
+## Plot estimated trend
+small_fitted_1 <- ggplot(newYear, aes(x = Year, y = fit)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper, x = Year), alpha = 0.2, inherit.aes = FALSE, fill = "black") +
+  geom_point(data = small, mapping = aes(x = Year, y = d15N), inherit.aes = FALSE) + geom_line() +
+  labs(y = d15n_label, x = "Year CE") 
+small_fitted_1
+
+# 4. ## fit small water GAM using gamm() with a CAR(1) 
+m_2 <- gamm(d15N ~ s(Year, k = 15), data = small, correlation = corCAR1(form = ~ Year), method = "REML")
+summary(m_2$gam)
+# The trend is statistically significant (effective degrees of freedom = 7.95; F = 47.44, approximate p value = ≪ 0.0001). 
+
+# 5
+
+## estimate of phi and confidence interval
+smallPhi <- intervals(m_2$lme, which = "var-cov")$corStruct 
+smallPhi
+
+
+# Calculate decay at different temporal distances
+S <- seq(0, 50, length = 100)
+car1 <- setNames(as.data.frame(t(outer(smallPhi, S, FUN = `^`)[1, , ])), c("Lower","Correlation","Upper")) # just phi^ distance
+car1 <- transform(car1, S = S)
+car1Plt <- ggplot(car1, aes(x = S, y = Correlation)) + 
+  geom_ribbon(aes(ymax = Upper, ymin = Lower),fill = "black", alpha = 0.2) + geom_line() +
+  ylab(expression(italic(c) * (list(h, varphi)))) +
+  xlab(expression(h ~ (years))) 
+car1Plt
+
+
+# 6
+
+newYear <- with(small, data.frame(Year = seq(min(Year), max(Year), length.out = 200)))
+## Predict from the fitted model; note we predict from the $gam part
+newYear <- cbind(newYear, data.frame(predict(m_2$gam, newYear, se.fit = TRUE)))
+## Create the confidence interval
+crit.t <- qt(0.975, df = df.residual(m_2$gam)) 
+newYear <- transform(newYear, 
+                     upper = fit + (crit.t * se.fit), 
+                     lower = fit - (crit.t * se.fit))
+
+## Plot estimated trend
+small_fitted_2 <- ggplot(newYear, aes(x = Year, y = fit)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper, x = Year), alpha = 0.2, inherit.aes = FALSE, fill = "darkblue") +
+  geom_point(data = small, mapping = aes(x = Year, y = d15N), inherit.aes = FALSE) + 
+  geom_line(col = "darkblue") +
+  labs(y = d15n_label, x = "Year CE") 
+small_fitted_2
+
+# compare the two model fits
+small_compare_plot <- plot_grid(small_fitted_1, small_fitted_2,  nrow = 2, align = "hv", labels = "auto")
+small_compare_plot
+```
+
+## Braya-Sø time series
+1. First try fitting the same model to the Braya-Sø data (gam, REML, CAR1)
+2. Also try fitting the the model using gam and GCV
+3. Inspect phi and the confidence interval of phi in the CAR1 model
+4. Plot the two models and compare the fits
+
+```{r practical1b}
+
+# 1
+# NB: Needs  optim as this is not a stable fit and  needs k setting lower. Code failed when k was set to 5 as in example but set to 10 and show the same problem
+braya.car1 <- gamm(UK37 ~ s(Year, k = 10), data = braya, correlation = corCAR1(form = ~ Year), method = "REML",
+                   control = list(niterEM = 0, optimMethod = "BFGS", opt = "optim"))
+
+# 2
+## fit model using GCV
+braya.gcv <- gam(UK37 ~ s(Year, k = 30), data = braya, method = "GCV.Cp")
+
+# The trend is statistically significant (effective degrees of freedom = 7.95; F = 47.44, approximate p value = ≪ 0.0001). 
+
+# 3
+## estimate of phi and confidence interval
+smallPhi <- intervals(braya.car1$lme)$corStruct # Note here the very wide confidence interval around phi (0-1)
+
+# 4
+N <- 300 # number of points at which to evaluate the smooth
+## data to predict at
+newBraya <- with(braya, data.frame(Year = seq(min(Year), max(Year), length.out = N)))
+## add predictions from GAMM + CAR(1) model 
+newBraya <- cbind(newBraya, data.frame(predict(braya.car1$gam, newBraya, se.fit = TRUE)))
+crit.t <- qt(0.975, df = df.residual(braya.car1$gam)) 
+newBraya <- transform(newBraya, upper = fit + (crit.t * se.fit), lower = fit - (crit.t * se.fit))
+## add GAM GCV results
+fit_gcv <- predict(braya.gcv, newdata = newBraya, se.fit = TRUE) 
+crit.t <- qt(0.975, df.residual(braya.gcv))
+newGCV <- data.frame(Year = newBraya[["Year"]],
+                     fit = fit_gcv$fit,
+                      se.fit = fit_gcv$se.fit)
+newGCV <- transform(newGCV, upper =  fit + (crit.t * se.fit), lower =fit - (crit.t * se.fit))
+
+newBraya <- rbind(newBraya, newGCV) # bind on GCV results
+## Add indicator variable for model 
+newBraya <- transform(newBraya, Method = rep(c("GAMM (CAR(1))", "GAM (GCV)"), each = N))
+
+
+braya_fitted <- ggplot(braya, aes(y = UK37, x = Year)) +
+  geom_point() + 
+  geom_ribbon(data = newBraya, mapping = aes(x = Year, ymax = upper, ymin = lower, fill = Method), alpha = 0.3, inherit.aes = FALSE) + 
+  geom_line(data = newBraya, mapping = aes(y = fit, x = Year, colour = Method)) + 
+  labs(y = braya_ylabel, x = "Year CE") +
+  scale_color_manual(values = c("#5e3c99", "#e66101")) + 
+  scale_fill_manual(values = c("#5e3c99", "#e66101")) + 
+  theme(legend.position = "right")
+braya_fitted
+
+ 
+```
+
+
+# What to do with Braya-Søy data?
+- Clearly unable to identify both the wiggly trend and the autocorrelation process.
+- This can be a common feature in palaeoecological time-seies. But what to do about it?
+- Simpson (2018) suggests 
+1. refitting the model with a lower number of basis functions (e.g. `k = 15`) without any autocorrelation and using `gam.check()` to see if a lower number of basis functions is good enough to explain the wiggliness in the data
+2. If evidence is present that more basis functions are needed, then double the value of k and refit the model until you get a `k-index` greater than 1 and *p* value > 0.05
+
+*remember*: this only a heurstic check. Could be that you keep increasing `k` without making these criteria. IN this case note the value of edf in the column. If this doesn't change much as `k` increases the perhaps increasing it further it suggests the smooth is not dependent on the value of `k` chosen. Note that if you do this is still the case here `k= 40`)
+
+```{r practical1 cont}
+braya_low_k <- gam(UK37 ~ s(Year, k = 15), data = braya, method = "REML")
+gam.check(braya_low_k)
+# Notes:  First few lines provide info about model fit, convergence andand some diagnositics
+# The table can be a useful approximation tool to evaluate the model
+# effective degrees of greedom for the estimated smooth- the complexity and wiggliness of the smooth. 
+# Here we see low k index - test statsitcs for a test of a sufficient number of basis functions.
+# p measures support for null hypothesis that enough basis functions were available. Here p is very low, and k index is less than 1, so it is likely that not enough basis functions were used when fitting the model here.
+```
+
+```{r practical1 cont2}
+braya_high_k <- gam(UK37 ~ s(Year, k = 40), data = braya, method = "REML")
+gam.check(braya_high_k)
+
+braya_resid <- with(braya, data.frame(Year = Year, resid =residuals(braya_high_k) ))
+braya_resid_plot <- ggplot(braya_resid, aes(y = resid, x = Year)) +
+  geom_hline(yintercept=0, linetype="dashed", color = "red") +
+  geom_point() + 
+  labs(y = "Residuals", x = "Year CE") 
+
+```
+
+# Variance differences as a result of time averaging
+- One factor noted in Simpson (2018) was that the heteroscadiscity may have arisen because of the different number of lake years represented in each sample in the dataset
+- Could expect sample spanning more lake years has a higher variance than samples representing lower lake years 
+- Indeed, some evidence of heteroscadiscity in residuals in the REML model with `k = 40`
+
+```{r braya_resid}
+braya_resid <- with(braya, data.frame(Year = Year, resid =residuals(braya_high_k, type = "pearson") ))
+braya_resid_plot <- ggplot(braya_resid, aes(y = resid, x = Year)) +
+  geom_hline(yintercept=0, linetype="dashed", color = "red") +
+  geom_point() + 
+  labs(y = "Residuals", x = "Year CE") 
+
+```
+
+# Variance differences as a result of time averaging
+- One solution proposed by Simpson is to make a weighting function (as we tried using GLS), based on the time represented in each sample
+- Here we have set `k = 40` and we have now included a term to account for potential heteroscadiscity in the residuals
+
+```{r braya weights }
+braya_reml <- gam(UK37 ~ s(Year, k = 40), data = braya, method = "REML", 
+                  weights = sampleInterval / mean(sampleInterval))
+
+summary(braya_reml)
+```
+
+# Variance differences as a result of time averaging
+- And we can use `gam.check()` to see if the higher number of basis functions is sufficient
+- Now the model diagnostic check is much improved- it seems we have enough basis functions to model the trends in the timeseries
+```{r braya weights2 }
+par(mfrow = c(2,2))
+gam.check(braya_reml)
+```
+
+
+# Variance differences as a result of time averaging
+- The weighted residuals of this pmodel look better
+```{r braya_resid_weighted}
+braya_resid_reml <- with(braya, data.frame(Year = Year, resid_reml =residuals(braya_reml, "scaled.pearson") ))
+
+braya_resid_plot_2 <- ggplot(braya_resid_reml, aes(y = resid_reml, x = Year)) +
+  geom_hline(yintercept=0, linetype="dashed", color = "red") +
+  geom_point() + 
+  labs(y = "Weighted Residuals", x = "Year CE") 
+
+plot_grid(braya_resid_plot, braya_resid_plot_2,  nrow = 2, align = "hv", labels = "auto")
+
+```
+
+
+# Variance differences as a result of time averaging
+- We can plot the fitted trend to these data as well
+- Can see that the REML fit with heteroscadiscity taken into account gives a very similar fit to the model fitted with GCV
+- This is the preferred model in the Simpson (2018) paper
+```{r braya_resid_weighted-1}
+N <- 300 # number of points at which to evaluate the smooth
+## data to predict at
+newREML <- with(braya, data.frame(Year = seq(min(Year), max(Year), length.out = N)))
+## add predictions from GAMM + CAR(1) model 
+newREML <- cbind(newREML, data.frame(predict(braya_reml, newBraya, se.fit = TRUE)))
+crit.t <- qt(0.975, df = df.residual(braya_reml)) 
+newREML <- transform(newREML, upper = fit + (crit.t * se.fit), lower = fit - (crit.t * se.fit))
+newREML <- transform(newREML, Method = rep(c("GAM (REML, weighted)")))
+
+braya_REMLfitted <- ggplot(braya, aes(y = UK37, x = Year)) +
+  geom_point() + 
+  geom_ribbon(data = newREML, mapping = aes(x = Year, ymax = upper, ymin = lower, fill = Method), alpha = 0.3, inherit.aes = FALSE) + 
+  geom_line(data = newREML, mapping = aes(y = fit, x = Year,  colour = Method) ) + 
+  labs(y = braya_ylabel, x = "Year CE") +
+  theme(legend.position = "right")
+
+plot_grid(braya_fitted, braya_REMLfitted,  nrow = 2, align = "hv", labels = "auto")
+
+
+```
+
+# Some comments on fitting GAMs
+- Can see from these two examples that it sometimes requires a good understanding of the data to get design a protocol for fitting GAMs
+- For palaeoecological time series, where sample resolution can be relatively low, the `corCAR1()` model can do a good job when the trend is occuring over a much longer timescale relative to the resolution of the samples
+- In that case, the `corCAR1()` model is estimating autocorrelation representing much shorter periods of variabiity
+
+- In the Braya-Sør case, the trend is much more 'wiggly', and the low sampling resolution relative to the variability means that the GAM found it difficult to differentiate between autocorrelation and high-frequency variabilty in the same model
+- In this case the CAR(1) model was unidentifiable
+- Note, I have often found that the `corAR1()` model can be unidentifiable in palaeo-datasets. 
+- A solution I have found is that using `corExp()` (designed for unevenly spaced temporal/ spatial data) can work just as effectively as instead
+
+```{r braya_resid_weighted_autocorrelation?}
+# gls_braya_resid_corCAR1<- gls(resid_reml ~ Year,  data = braya_resid_reml, correlation = corCAR1(form = ~ Year) )
+# summary(gls_braya_resid_corCAR1) # Here autocorrelation is not identifiable
+# 
+# ## estimate of phi and confidence interval
+# smallPhi <- intervals(gls_braya_resid_corCAR1, which = "var-cov")$corStruct 
+# smallPhi
+# 
+# # Calculate decay at different temporal distances
+# S <- seq(0, 50, length = 100)
+# car1 <- setNames(as.data.frame(t(outer(smallPhi, S, FUN = `^`)[1, , ])), c("Lower","Correlation","Upper")) # just phi^ distance
+# car1 <- transform(car1, S = S)
+# car1Plt <- ggplot(car1, aes(x = S, y = Correlation)) + 
+#   geom_ribbon(aes(ymax = Upper, ymin = Lower),fill = "black", alpha = 0.2) + geom_line() +
+#   ylab(expression(italic(c) * (list(h, varphi)))) +
+#   xlab(expression(h ~ (years))) 
+# car1Plt
+# 
+# 
+# # Checking using semi-variograms instead
+# gls_braya_resid <- gls(resid_reml ~ Year,  data = braya_resid_reml)
+# # plot(Variogram(gls_braya_resid), form = ~ Year)
+# 
+# gls_braya_resid_corExp <- gls(resid_reml ~ Year,  data = braya_resid_reml, correlation = corExp(form = ~ Year) )
+# summary(gls_braya_resid_corExp)
+
+```
+
+# Suggestion from Mark Wood for Mackay et a. 2016 paper to still enable temporal autocorrelation to be used
+- Use `gam.check()` to fit a model using REML and check that you have the right number of basis dimensions
+- Use `gls(resid ~ Year, correlation = corExp(form = ~ Year))` on the residuals to determine the range of the `corExp()` model
+- Initialise a scaled-covariance matrix which takes into account the AR1 errors based on the AR1 model
+- Fir the smooth, taking into account the *known* correlation
+- Then refit using the `magic()` function in `mgcv` and modify the `gam()` object for plotting
+
+```{r magic}
+# # See also, help file in 'magic()' in the mgcv package
+# 	
+# 	# expR is the range of the exponential autocorrelation function (calculated above)
+# 	# All other arguments defined as above
+# 	expR <- 20
+# 	## produce scaled covariance matrix for AR1 errors.
+#     V <- corMatrix(Initialize(corExp(expR, form = ~ x), data.frame(x=dataTab$age)))
+#     Cv <- chol(V)  # 
+# 
+# 	## Fit smooth, taking account of *known* correlation...
+#     w <- solve(t(Cv)) # 
+#     
+#     ## Use `gam' to set up model for fitting...
+#     model.f <- as.formula(paste(varNam ,"~ s(age, k=",  k1, ", fx= TRUE)")) 
+#     m2 <- gam(model.f, data = dataTab, na.action= na.exclude, method= "REML", fit= FALSE)
+#     
+#     ## fit using magic, with weight *matrix*
+#     mgfit <- magic(m2$y,m2$X,m2$sp,m2$S,m2$off,rank=m2$rank,C=m2$C,w=w)
+# 
+# 	## Modify previous gam object using new fit, for plotting...    
+#     mg.stuff <- magic.post.proc(m2$X,mgfit,w)
+#     model$edf <- mg.stuff$edf;model$Vp <- mg.stuff$Vb
+#     coefNames <- names(model$coefficients)
+#     coefFit <- mgfit$b; names(coefFit) <- coefNames
+#     model$coefficients <- coefFit 
+
+```
+
+# How to determine periods of change using GAMs?
+- Focus when using `gnls()` models was that we could fit different models to test, e.g., where and when a change occurred
+- GAMs are not only useful to describe trends. Simpson (2018) also proposes using *simultaneous intervals* to test when a period of significant change has occurred
+- In a linear model the estimated rate of change in $y_t$ is ($\hat{\beta}_1$) relative to its uncertainty, summarised using the $t$ statistic. 
+- In a linear model we only have one trend to estimate because it is linear, but in a GAM we have a non-linear trend
+- Solution proposed by Simpson (2018) is to test if the first derivative at any time point $x_t$ of the fitted trend at any time point is indistinguishable from $0$ (no trend) given the uncertainty of the model.
+- Calculated by estimating *simulatenous intervals* of the model and comparing the first deriviatives between two points across a finite distance.
+- To do this we need to estimate the simultaneous intervals
+
+
+# Confidence and simultaneous intevals of the GAM model
+- 95% confidence interval of the trend at time $x_t$ is $\hat{y}_t \pm (m_{1-\alpha} \times \text{SE}(\hat{y}_t))$, with $m_{1-\alpha} = 1.96$, the 0.95 probability quantile of a standard normal distribution[^tdistrib], and $\text{SE}(\hat{y}_t)$ is the standard error of the estimated trend at time $x_t$.
+- *pointwise* confindence interval, relevant for a single point on the trend, but this would be wider if we want to consider additional points on the trend.
+- Instead Simpson (2018) proposes uses the *simulatneous interval*: contains the entirety of the true function with some state probability (1 - $\alpha$).
+- A (1 - $\alpha$)100% simultaneous confidence interval contains 1 - $\alpha$ of all random draws from the posterior distribution of the fitted model.
+- *Posterior simulation* involves randomly sampling from the distributions surrounding the cooefficients (weights) of the basis functions
+- Each random draw is a new trend that is consistent with the fitted trend but which also reflects uncertainty in the trend.
+
+```{r posterior-simulation}
+
+mod <- gamm(d15N ~ s(Year, k = 15), data = small,
+            correlation = corCAR1(form = ~ Year), method = "REML")
+
+intercept <- summary(mod$gam)$p.coeff
+
+set.seed(1)
+nsim <- 20 # the number of simulations
+take <- 20 # the number of simulations to extract when plotting
+sims <- smooth_samples(mod$gam, n = nsim, newdata = newYear, unconditional = TRUE) # posterior simulation function
+
+randSims <- sims %>% 
+  select(.x1, draw, value) %>% 
+  mutate(sim = "sim") %>% 
+  unite(col = "run",  sim, draw) %>% 
+  rename(Year = .x1, simulated = value) %>% 
+  mutate(simulated = simulated + intercept) # cleans up the dataframe. Need to sum the results of the smooth with the intercept estiamted in the model 
+
+## Plot simulated trends
+smallSim.plt <- ggplot(newYear, aes(x = Year, y = fit)) +
+    geom_line(data = randSims, mapping = aes(y = simulated, x = Year, group = run),
+              colour = "grey80") +
+    geom_line(lwd = 1) +
+    labs(y = d15n_label, x = "Year CE")
+## posterior simulation
+
+
+## need to reset-up newBraya
+fullREML2 <- gam(UK37 ~ s(Year, k = 40), data = braya, method = "REML",
+                 weights = sampleInterval / mean(sampleInterval))
+intercept2 <- summary(fullREML2)$p.coeff
+
+N <- 200
+newBraya <- with(braya, data.frame(Year = seq(min(Year), max(Year), length.out = N)))
+brayaREML2 <- cbind(newBraya, data.frame(predict(fullREML2, newBraya, se.fit = TRUE)))
+## simulate
+set.seed(1)
+sims2 <- smooth_samples(fullREML2, n = nsim, newdata = newBraya, unconditional = TRUE)
+randSims2 <- sims2 %>% 
+  select(.x1, draw, value) %>% 
+  mutate(sim = "sim") %>% 
+  unite(col = "run",  sim, draw) %>% 
+  rename(Year = .x1, simulated = value) %>% 
+  mutate(simulated = simulated + intercept2)
+
+brayaSim.plt <- ggplot(brayaREML2, aes(x = Year, y = fit)) +
+    geom_line(data = randSims2, mapping = aes(y = simulated, x = Year, group = run),
+              colour = "grey80") +
+    geom_line(lwd = 1) +
+    labs(y = braya_ylabel, x = "Year CE")
+plot_grid(smallSim.plt, brayaSim.plt, ncol = 1, labels = "auto", align = "hv", axis = "lr")
+```
+
+
+# Simultaneous confidence intervals using `gratia`
+- Function `confint()` calculates the simultaneous confidence intervals on a `gam()`, providing the critical value $m_{1-\alpha}$ required.
+- Using an approach outlined by @Ruppert2003-pt. See Simpson (2018) Appendix 1 for more information
+
+```{r simulataneous intervals }
+## small water
+# sw.cint <- confint(mod, parm = "Year", newdata = newYear, type = "confidence")
+sw.sint <- confint(mod, parm = "Year", newdata = newYear, type = "simultaneous")
+## braya so
+# bs.cint <- confint(fullREML2, parm = "Year", newdata = newBraya, type = "confidence")
+bs.sint <- confint(fullREML2, parm = "Year", newdata = newBraya, type = "simultaneous")
+smallInt.plt <- ggplot(sw.sint, aes(x = Year, y = est)) +
+    geom_ribbon(data = sw.sint, mapping = aes(ymin = lower, ymax = upper, x = Year),
+                fill = "grey80", inherit.aes = FALSE) +
+    geom_line(lwd = 1) +
+    labs(y = d15n_label, x = "Year CE")
+brayaInt.plt <- ggplot(bs.sint, aes(x = Year, y = est)) +
+    geom_ribbon(data = bs.sint, mapping = aes(ymin = lower, ymax = upper, x = Year),
+                fill = "grey80", inherit.aes = FALSE) +
+    geom_line(lwd = 1) +
+    labs(y = braya_ylabel, x = "Year CE")
+plot_grid(smallInt.plt, brayaInt.plt, ncol = 1, labels = "auto", align = "hv", axis = "lr")
+```
+
+# Now for estimating the derivatives
+- Using the finite difference approach, you can estimate the first derivative by calculating the difference in the fitted model between two points seperated by a short time shift ($\Delta_t$)
+- As $\Delta_t \rightarrow 0$ the approximation becomes increasingly accurate. 
+- Step involves calculating the (1 - $\alpha$)100% simultaneous interval for the derivatives following posterior simulation
+- Periods of significant change are identified as those time points where the (simultaneous) confidence interval on the first derivative does not include zero.
+- Numerous functions in `gratia` to emable you to do this
+
+```{r derivatives}
+N <- 200
+small.d <- fderiv(mod, newdata = newYear, n = N)
+small.sint <- with(newYear, cbind(confint(small.d, nsim = nsim, type = "simultaneous"), Year = Year))
+small_deriv_plt <- ggplot(small.sint, aes(x = Year, y = est)) +
+    geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, fill = "black") +
+    geom_line() +
+   geom_hline(yintercept=0, linetype="dashed", color = "red") +
+    labs(x = "Year CE", y = "First derivative")
+braya.d <- fderiv(fullREML2, newdata = newBraya, n = N)
+braya.sint <- with(newBraya, cbind(confint(braya.d, nsim = nsim, type = "simultaneous"), Year = Year))
+braya_deriv_plt <- ggplot(braya.sint, aes(x = Year, y = est)) +
+    geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.2, fill = "black") +
+    geom_line() +
+  geom_hline(yintercept=0, linetype="dashed", color = "red") +  
+  labs(x = "Year CE", y = "First derivative")
+plot_grid(small_deriv_plt, braya_deriv_plt, ncol = 1, labels = "auto", align = "hv", axis = "lr")
+```
+
+# Practical exercise
+1. Download a pollen dataset of interest from Neotoma (or use your own dataset)
+2. Fit a GAM model to explore variation in the dataset
+3. Use simulatneous confidence intervals to identify periods of significant change
+
+
+
+
+

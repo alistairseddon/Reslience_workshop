@@ -1,0 +1,452 @@
+---
+title: "Session3_non_linear_regression"
+author: "Alistair Seddon"
+date: "3/11/2020"
+output: slidy_presentation
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+- One of the classic pieces of evidence used to assess regime shifts in palaeoecological temporal series are abrupt changes in the response variable (see Scheffer and Carpenter 2003)
+- Here we focus on some commonly used approaches assessing temporal series using break-point analysis and non-linear regression (e.g. Carstensen and Weydmanm 2011, used in Seddon et al. 2014)
+
+# Theoretical Basis
+```{r williams, out.width = "30%", fig.align = 'center', echo = FALSE}
+img1_path <- "images/williams_2011_header.png"
+img2_path <- "images/williams_2011_figure.png"
+knitr::include_graphics(img1_path)
+knitr::include_graphics(img2_path)
+```
+
+# Statistical Approach
+```{r carstensen, out.width = "30%", fig.align = 'center', echo = FALSE}
+img3_path <- "images/carstensen_2012_header.png"
+img4_path <- "images/carstensen_2012_figure.png"
+knitr::include_graphics(img3_path)
+knitr::include_graphics(img4_path)
+```
+
+# Set up
+We need the following packages for today.
+```{r setup2, echo = TRUE}
+library("tidyverse")
+library("neotoma")
+library("nlme")
+library("mgcv")
+# library("scam")
+library("ggplot2")
+library("cowplot")
+theme_set(theme_cowplot())
+```
+
+# Fitting a model by ordinary least squares
+- Let's start with fitting a linear model using ordinary least squares (OLS)
+- We assume that a trend in the time series $T$ of observations $y_t$ at observation times $x_t$ with $t$ is described by
+\begin{equation} \label{eq:linear-model}
+y_t = \beta_0 + \beta_1 x_t + \varepsilon_t \,,
+\end{equation}
+where $\beta_0$ is a constant term, the model *intercept*, representing the expected value of $y_t$ where $x_t$ is 0. $\beta_1$ is the *slope* of the best fit line through the data
+
+- Unknowns are commonly estimated using least squares by minimising the sum of squared errors, $\sum_t \varepsilon_t^2$. 
+- Assume the residuals are independently drawn from a Gaussian distribution and are identically distributed: $\varepsilon_t \stackrel{iid}{\sim} \mathcal{N}(0, \sigma^2)$.
+
+- OLS to miminise the difference between predicted value and the residuals.
+
+## Remember the following assumptions:
+1. The relationship between the response and the predictors is ~linear.
+2. The residuals have a mean of zero.
+3. The residuals have constant variance (not heteroscedastic).
+4. The residuals are independent (uncorrelated).
+5. The residuals are normally distributed.
+
+# OLS example using modelled data
+```{r OLS example}
+set.seed(2)
+b1 <- 2
+t <- 1:20
+y <- b1* t + rnorm(length(t), 0, 5)
+
+ols <- lm(y ~ t)
+pred_values <- predict(ols)
+
+plot(t, y, ylim = c(-10,50), main = "OLS modelled data")
+abline(ols, col = "blue")
+ols.data <- cbind(t, y, pred_values)
+for(i in 1: nrow(ols.data))  lines(c( ols.data[i,"t"], ols.data[i,"t"]), c(ols.data[i,"y"], ols.data[i,"pred_values"]), col= "red")
+```
+
+We can calculate the residuals of this and inspect the residuals
+```{r OLS example 2}
+residuals <- y - predict(ols)
+hist(residuals)
+
+# Check the coefficients of the model (should be 2)
+coef(ols)
+```
+R also has some built in model checking functions for ols models
+```{r OLS check}
+par(mfrow= c(2,2))
+plot(ols)
+```
+
+# Generalised (weighted) regression (generalised least squares, GLS)
+- With time series data, as we have seen, residuals may be autocorrelated
+- They may also not have constant variance.
+
+**GLS** provides a potential solution
+Let's start by assuming non-constant changes in variance
+
+Now we assume that a trend in the time series $T$ of observations $y_t$ at observation times $x_t$ with $t$ is described by
+\begin{equation} \label{eq:weighted-linear-model}
+k_t y_t = k_t \beta_0 + k_t \beta_1 x_t + k_t \varepsilon_t \,,
+\end{equation}
+where $\beta_0$ is a constant term, the model *intercept*, representing the expected value of $y_t$ where $x_t$ is 0. $\beta_1$ is the *slope* of the best fit line through the data.
+In addition $k_t$ is the $\sqrt{W}$ and where $W$ represents the *weight matrix*.
+
+\begin{equation*}
+\begin{Wmatrix}
+1      & 0 & 0 & \dots & 0 \\
+0      & 1 & 0 & \dots & 0 \\
+0      & 0 & 1 & \dots & 0 \\
+\vdots & \vdots & \vdots & \ddots & \vdots \\
+0      & 0 & 0 & \dots & 1
+\end{Wmatrix}\, ,
+\end{equation*}
+
+Here the diagonals all equal 1 so each sample residual is equally weighted. However, we could, for example, downweight an observation because of sample error such that in the following weight matix, $W$, the third sample has been downweighted:
+
+\begin{equation*}
+\begin{Wmatrix2}
+1      & 0 & 0 & \dots & 0 \\
+0      & 1 & 0 & \dots & 0 \\
+0      & 0 & 0.5 & \dots & 0 \\
+\vdots & \vdots & \vdots & \ddots & \vdots \\
+0      & 0 & 0 & \dots & 1
+\end{Wmatrix2}\, ,
+\end{equation*}
+# e.g. downwieght 5th observation
+
+This is potentially useful, because the residuals in a dataset might not necessarily have uniform variance and so this could be accountedfor in the model
+
+Now imagine we have the same model as before, but the size of the error increases linearly with the observation time $t$
+
+```{r increasing variance }
+set.seed(2)
+b1 <- 2
+t <- 1:20
+y <- b1* t + rnorm(length(t), 0, 5)*t/10
+
+ols <- lm(y ~ t)
+pred_values <- predict(ols)
+
+plot(t, y, ylim = c(0,50))
+abline(ols, col = "blue")
+ols.data <- cbind(t, y, pred_values)
+for(i in 1: nrow(ols.data))  lines(c( ols.data[i,"t"], ols.data[i,"t"]), c(ols.data[i,"y"], ols.data[i,"pred_values"]), col= "red")
+```
+
+```{r weighted residuals estimate}
+residuals <- y - predict(ols)
+plot(t, residuals)
+abline(h = 0, lty = 2)
+
+# Our fit is biased
+summary(ols)
+```
+
+Instead we can estimate a new weight matrix so that every parameter value is multiplied by the apppropriate weight (see {eq:weighted-linear-model}). 
+
+We can therefore adjust the influence of the point and also adjust the size of the residuals using the `gls()` function from the `nlme()` package
+
+```{r gls fitting}
+# Fitting a model with an IID covariance matrix (same as OLS)
+gls_fit <- gls(y ~t )
+
+# Fitting with a weight matrix which increases according to the observation t
+gls_fit_weights <- gls(y ~t, weights =varFixed(~t) )
+
+# Compare the two outputs
+summary(gls_fit)
+summary(gls_fit_weights)
+
+# Can inspect the weights here
+modelWeights <- attr(gls_fit_weights$modelStruct$varStruct, "weights")
+
+# Can get the weighted residuals and compare agains the unweighted residuals
+w_resid <- tibble(model = "weighted_gls", residuals = gls_fit_weights$residuals*(modelWeights), t = t) # gls_fit_weights$residuals*(modelWeights)
+un_weighted_resid <- tibble(model = "unweighted_gls", residuals = resid(gls_fit_weights ) , t = t)
+
+resid_gls_compare <- bind_rows(w_resid, un_weighted_resid)
+
+resid_gls_compare_plot <- resid_gls_compare %>% 
+  ggplot(aes(x = t, y= residuals)) +
+  geom_point(aes(col = model)) +
+  geom_hline(yintercept = 0, color = "darkgrey")
+
+# We can use AIC to check whether this is in fact a better model
+AIC(gls_fit, gls_fit_weights ) # The model with the weighted residuals is better due to lower AIC
+```
+
+## Different variance structures exist
+- An exponential variance function
+```{r gls variance structures}
+# exponential variance function
+gls_fit_weights_2 <- gls(y ~t, weights =varExp(form = ~t) )
+AIC(gls_fit, gls_fit_weights, gls_fit_weights_2 ) 
+```
+
+- Variance functions that show a step-change after a certain value of $x_t$ (in palaeoecological terms- testing for a step change in variance over time) 
+```{r gls step-change in variance}
+r1 <- rnorm(10, 0, 0.5)
+r2 <- rnorm(10, 0, 3)
+y <- c(r1, r2)
+regime <- as.factor(c(rep("r1", 10), rep("r2", 10)))
+plot(t, y,col = regime)
+ 
+gls_unweighted <- gls(y ~ t)
+gls_weighted <- gls(y ~ t, weights = varIdent(form = ~+1|regime))
+
+AIC(gls_unweighted, gls_weighted)
+summary(gls_weighted)
+```
+
+There are many others to explore. See `?nlme::varClasses` for further details
+
+# Temporal autocorrelation
+When modelling trends in time series, samples may not be independent as a result of temporal dependence in the samples. 
+The population density $A$ of a plant at $t_{i}$ is likely to be similar to the population denisty at $t_{i-1}$
+This can lead to spurious trends and correlations
+It also means one of the key assumptions of the OLS model, that samples are independently distributed are violated
+
+Luckily, `gls(correlation = )` is useful here!
+
+Now I have a model to describe of the rate of change of the plant-population growth $dA / dt$ at time $t$ based is a function of the carrying capacity $K$, the plant population growth rate, $r$ at plant population density, $A$. In addition, rate of plant population growth is also dependent on the rate of consumption where $g$ is the maximum conumpsion rate, $H$ is the saturation rate determining the centre point of sigmoidal term to describe rate of consumption, and $p$ is the power term to describe the consumption rate, $c$ **(is that correct?)**
+
+\begin{equation} \label{eq:plant-population-model-consumers}
+d A / d t = r A (1- A/K) - g c A^p /{A^p + H^p}\,
+\end{equation}
+
+We stress the system here by creating a ramp function where the **consumption rate**
+```{r consumption ramp}
+t <- 1:175
+c <- c( seq(0.1, 2, 0.02), rep(2, 79))
+plot(t, c, type = "l", main = "Consumption rate function in model over time",
+     xlab = "Time (t)")
+
+
+```
+
+Then we can solve the model over time. Note we also add a bit of random noise to the term in the consumption model by multiplying this term by a randomly drawn number selected by  `runif(min = 0.1, max =0.9)`:
+
+```{r}
+K <- 100  # Carrying capacity, range 50-100
+r <- 0.2 # Growth rate, range 0-1
+
+# Consumer parameters
+g <- 4 # maximum consumption rate
+H <- 5 # Sat. rate determines centre point of sigmoidal curve
+p <- 5  # power term, gives sigmoidal relationship and determines steepness
+
+A <- rep(NA, length(t))
+
+starting.A <- 90 # Start at a high value of plant population density
+A[1] <- starting.A
+
+set.seed(13)
+dA.dt <- rep(NA, length(t)) # Result object for rate of population growth for timestep 1
+for(i in 1: (length(t)-1)) {
+    dA.dt[i] <-  r* A[i] * (1 -(A[i]/K) )  -  runif(min = 0.1, max =0.9, n =1)*(c[i]*g *A[i]^p / (A[i]^p + H^p))
+    A[i+1] <- A[i]+ dA.dt[i]
+  }  
+  crash.model <- tibble(t = t, A= A, At.1 = c(A[-1], NA), c = c)
+
+  
+# cut the initial data datapoints to let the model burn in
+# crash.model <- crash.model[-c(1:20),]
+ with(crash.model, plot(t, A))
+
+```
+
+Now we can test for a change in mean. It seems there is a population crash somewhere around $t = 83$
+```{r testing for crash}
+regime <- rep("r1", nrow(crash.model))
+regime[84:nrow(crash.model)] <- "r2"
+regime <- as.factor(regime)
+with(crash.model, plot(t, A, col = regime))
+
+```
+
+Now it is possible to test whether a 'regime shift' has occurred
+```{r regime shift test model}
+gls_null <- gls(  A ~ 1, data= crash.model) # null model
+
+gls_mod_1<-gls(A ~ regime, data= crash.model) # model between the different components
+summary(gls_mod_1)
+# yes, thinks the model suggests there is a significant difference in means between these two time points
+
+# but check the residuals
+plot(t, resid(gls_mod_1)) # definitely looks like there is some autocorrelation in the structure of the model
+
+# Use the acf function to test if there is autocorrelation in the residuals of the model. Yes there is. So our model might be overfit
+# what's the difference between partial on full lag one autocorrelation
+acf(resid(gls_mod_1)) # Indeed there is
+
+# OK so now we can fit a model which takes this into account.
+# Can use the nlme corAR1 function to respecify the correlation matrix which takes these autocorrelated errors into account
+gls_mod_2<-gls(A ~ regime, data= crash.model,  correlation = corAR1(form = ~ t))
+summary(gls_mod_2)
+
+gls_mod_2_resid <-  resid(gls_mod_2, type ="normalized")
+acf(gls_mod_2_resid) # Much better
+```
+
+# Ok but is there actually a hint of increase in variance as well?
+```{r test for variance increase as well}
+plot(crash.model$t, gls_mod_2_resid) 
+
+# There are a few options: a linear increase in variance with time
+gls_mod_3<-gls(A ~ regime, data= crash.model,  correlation = corAR1(form = ~ t), weights = varFixed(~t))
+summary(gls_mod_3)
+
+# Step change in variance at the regime shift we proposed
+gls_mod_4<-gls(A ~ regime, data= crash.model,  correlation = corAR1(form = ~ t), weights = varIdent(form = ~+1|regime))
+summary(gls_mod_4)
+
+gls_mod_5<-gls(A ~ regime, data= crash.model,  correlation = corAR1(form = ~ t), weights = varExp(form =~t))
+summary(gls_mod_5)
+
+```
+
+Comparing all these models with AIC suggests that model 3 is the best
+```{r AIC compare}
+AIC( gls_mod_1, gls_mod_2, gls_mod_3, gls_mod_4, gls_mod_5)
+
+gls_mod_3_resid <-  resid(gls_mod_3, type ="normalized")
+plot(crash.model$t, gls_mod_3_resid)
+abline(h = 0, lty = 2, col= "red")
+```
+
+Looking at the output of the model we are confident of a signficant change in the model $p < 0.05$
+```{r summary final model}
+summary(gls_mod_3)
+```
+
+str(summary(gls_mod_3)$ modelStruct $ corStruct)
+
+# What are we actually doing here?
+
+Remember the assumptions of the linear model under OLS. 
+The correlation matrix of a model describes the relationship between datapoints, and in an OLS model we assume indepedence:
+```{r autocorrelation explaination}
+cs0 <- corAR1(value = 0) # initialise a model where the autocorrelation paramter is 0
+with(crash.model, corMatrix(cs0, A))[1:6, 1:6] # inspect this for the first six samples
+```
+
+- The correlation matrix of a model with a high order of autocorrelation (e.g. $\phi = 0.98$) looks very different.
+- In an AR1 (first order auto-regressive structure) model, there is a correlation structure in which the degree of correlation between the two observations/ residuals is proportional to the relative amount of elapsed time. 
+- Specifically, the correlation is defined as $\phi^{|t-s|}$ wheere $|t-s|$ is the absolute diference between the current time $t$ and previous time $s$. So correlation of lag one is $\phi$, lag 2 is $\phi^{|2|}$ etc.
+- This autocorrelation structure assumes that (i) the pattern of correlation decline depends only on the lag and not when in the timeseries the lag occurs (i.e. stationarity) and that (ii) the correlation decline follows a very specific exponential pattern
+
+```{r autocorrelation explaination 2}
+cs1 <- corAR1(0.98, form =1 ~ crash.model$t)
+with(crash.model, corMatrix(cs1, A))[1:6, 1:6]
+```
+
+Or perhaps this is better to visualise as in a plot. 
+
+We can visualise this in the parameters of the model we selected in the previous example:
+
+```{r plot phi}
+smallPhi <- intervals(gls_mod_3, which = "var-cov")$corStruct 
+smallPhi
+
+corMat <- with(crash.model, corMatrix(cs1, A))
+plot(corMat[,1])
+
+S <- seq(0, 200, length = 50)
+ar1 <- setNames(as.data.frame(t(outer(smallPhi, S, FUN = `^`)[1, , ])), c("Lower","Correlation","Upper")) # just phi^ distance
+ar1 <- transform(ar1, S = S)
+ar1Plt <- ggplot(ar1, aes(x = S, y = Correlation)) + 
+  geom_ribbon(aes(ymax = Upper, ymin = Lower),fill = "black", alpha = 0.2) + geom_line() +
+  ylab(expression(italic(c) * (list(h, varphi)))) +
+  xlab(expression(h ~ (years))) 
+ar1Plt
+
+
+```
+
+
+
+
+
+
+<!-- # https://www.flutterbys.com.au/stats/tut/tut8.3a.html -->
+<!-- # So what gls is doing here is refitting the model with the different correlation structure in the model.  -->
+<!-- # Using the correlation=corAR1() argument, we can indicate that the off-diagonals of the variance-covariance matrix -->
+<!-- # should follow a specific pattern in which the degree of correlaton varies as an exponent equal to the lag.  -->
+<!-- # The spacing of the lags is taken from the form= argument. Of course, conceptually this is much more straight forward.  -->
+<!-- # If this is left blank, then it is assumed that the data are in chronological order and that each row represents a single unit increase in time (lag).  -->
+<!-- # In this case, the year variable is just a vector containing integers from 1 to 50, and therefore not strictly required.  -->
+<!-- # Nevertheless, it is good practice to always include it. -->
+
+
+<!-- # Incidentally, what happens if we assessed our timeseries with STARS -->
+
+<!-- crash.stars <- stars(y= y, time  =  t, L=20, p=0.05, h =1,  AR1red="none", prewhitening = FALSE) -->
+<!-- crash.stars_ar <- stars(y= y, time  =  t, L=20, p=0.05, h =1,  AR1red="IP4", prewhitening = TRUE) -->
+<!-- plot.stars(crash.stars)  -->
+
+
+
+### One more thing. Non linear regression: (GNLS) gives you the opportunity to fit many different model forms
+
+# The same principles as GLS except here we can specify different model functions
+# Proposed in Carstensen and Weydmenn (2012) for modelling time series.
+# Breakpoints, step changes in mean, step changes in variance, segemented changes in mean
+
+# all can be tested.
+
+# Approach is very similar, but use a slightly different model specification and algorthm in gnls
+
+# Example # Linear model fit
+# Fit the data
+
+x <- seq(1,30, 1)
+y <- 10 + (2*x) + rnorm(length(x), 0, 5) 
+y <- (y-min(y))/(max(y)- min(y))
+
+fit.gnls<-gnls(y~ b0 + b1*(x),start=c(b0=0, b1=0) ) # You have to write the equation yourself, and also provide starting values for the iteration to fit
+
+# Make a plot
+plot(x, y, pch=20, ylim=c(-0.5,1.5), main = "", yaxt="n", xaxt="n")
+axis(side=2, labels=F)
+sig <- summary(fit.gnls)$sigma # standard deviation of the residuals
+lines(x, predict(fit.gnls))
+lines(x, predict(fit.gnls)+sig*2, lty=2)
+lines(x, predict(fit.gnls)-sig*2, lty=2) 
+
+text(2, 1.45, "A", cex=1.2 )
+text(3, 1.45, "Linear relationship", pos=4, cex=0.8)
+text(3, 1.25, "Constant std.error", pos=4, cex=0.8)
+
+# See the attached the R script. Multiple responses modelled to show different relationships
+source("NLS_Script_ModelFitting.R")
+
+# Can you modify the code to make a step change model with both a step change relationship and a step change in variance at the same time?
+# Can you modify the code to show a linear model with an increase in variance?
+
+
+### Now on to the palaeoecology. Exercise.
+
+# Aims- to download data from Neotoma and fit a model to test for the temporal dynamics of pollen communities
+
+# Step 1: Download XXX site from Neotoma and calculate an ordination on pollen data to describe the main trends in vegetation through time
+# Step 2: Use gnls modelling to investigate the temporal dynamics across XX. Is there a trend in the vegetation composition?
+# Step 3: What extra data processing techniques would be required to use the STARS algorithm?
+# Step 4: How does this appraoch compare to other, classical modelling approaches?
+
+
+

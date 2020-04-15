@@ -6,8 +6,10 @@ install.packages(c("neotoma",
                  "nlme",
                  "mgcv",
                  "vegan",
-                 "cowplot"
+                 "cowplot",
+                 "plotly",
+                 "ggpubr"
                  )) 
-devtools::install_github("richardjtelford/ggpalaeo")
-devtools::install_github("gavinsimpson/gratia") 
+devtools::install_github("richardjtelford/ggpalaeo", force = TRUE)
+devtools::install_github("gavinsimpson/gratia", force = TRUE) 
 
